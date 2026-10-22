@@ -204,8 +204,7 @@ const filterNodeResponseData = ({
             keepTreeFields
           });
         } else if (fieldMap[key]) {
-          // Dynamic public fields are narrowed here instead of suppressing the index-type error.
-          Object.assign(obj, { [key]: item[key as keyof ChatHistoryItemResType] });
+          (obj as Record<string, unknown>)[key] = item[key as keyof ChatHistoryItemResType];
         }
       }
 
