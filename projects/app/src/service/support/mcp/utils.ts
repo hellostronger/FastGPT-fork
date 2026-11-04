@@ -427,6 +427,8 @@ export const callMcpServerTool = async ({ key, toolName, inputs, authProxy }: to
         });
       }
       throw error;
+    } finally {
+      await preparedRound?.releaseGenerationLease?.();
     }
   };
 

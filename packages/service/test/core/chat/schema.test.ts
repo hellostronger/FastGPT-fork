@@ -38,16 +38,22 @@ describe('chat schema indexes', () => {
     expect(sourceAwareIndex?.[1]?.unique).toBe(true);
   });
 
-  it('keeps deprecated share data and its index, and registers no historical index for cleanup', () => {
+  it('keeps deprecated share data and its index, and only registers the obsolete generation status index for cleanup', () => {
     expect(MongoChat.schema.path('shareId')).toBeDefined();
     expect(
       hasIndex(MongoChat.schema.indexes(), { shareId: 1, outLinkUid: 1, updateTime: -1 })
     ).toBe(true);
-    // 1.6.x still relies on chatGenerateStatus for the generate lock, so it stays an active index.
+    // #8044：运行状态改由 Redis lease 推导，旧 chatGenerateStatus 索引登记为 deprecated 待清理。
     expect(
       hasIndex(MongoChat.schema.indexes(), { chatGenerateStatus: 1, updateTime: 1 })
-    ).toBe(true);
-    expect(getSchemaDeprecatedMongoIndexes(MongoChat.schema)).toEqual([]);
+    ).toBe(false);
+    expect(getSchemaDeprecatedMongoIndexes(MongoChat.schema)).toMatchObject([
+      {
+        indexName: 'chatGenerateStatus_1_updateTime_1',
+        key: { chatGenerateStatus: 1, updateTime: 1 },
+        options: { partialFilterExpression: { chatGenerateStatus: 0 } }
+      }
+    ]);
   });
 
   it('keeps legacy chat item read and pagination indexes', () => {

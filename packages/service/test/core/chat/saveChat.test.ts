@@ -21,7 +21,6 @@ import { S3Buckets } from '@fastgpt/service/common/s3/config/constants';
 import {
   ChatSourceEnum,
   ChatFileTypeEnum,
-  ChatGenerateStatusEnum,
   ChatRoleEnum,
   ChatSourceEnum,
   ChatSourceTypeEnum
@@ -806,7 +805,6 @@ describe('pushChatRecords', () => {
         tmbId: testTmbId,
         sourceType: ChatSourceTypeEnum.app,
         source: props.source,
-        chatGenerateStatus: ChatGenerateStatusEnum.generating,
         hasBeenRead: false
       });
       await MongoChatItem.create([
@@ -835,7 +833,7 @@ describe('pushChatRecords', () => {
       await finalizeChatRound(props);
 
       const chat = await MongoChat.findOne({ appId: testAppId, chatId: props.chatId }).lean();
-      expect(chat?.chatGenerateStatus).toBe(ChatGenerateStatusEnum.done);
+      expect(chat).not.toHaveProperty('chatGenerateStatus');
       expect(chat?.hasBeenRead).toBe(false);
       expect(chat?.summary).toEqual({
         llmInputTokens: 13,
@@ -907,7 +905,6 @@ describe('pushChatRecords', () => {
         tmbId: testTmbId,
         sourceType: ChatSourceTypeEnum.skillEdit,
         source: props.source,
-        chatGenerateStatus: ChatGenerateStatusEnum.generating,
         hasBeenRead: false
       });
       await MongoChatItem.create([
@@ -966,7 +963,6 @@ describe('pushChatRecords', () => {
         tmbId: testTmbId,
         sourceType: ChatSourceTypeEnum.app,
         source: props.source,
-        chatGenerateStatus: ChatGenerateStatusEnum.generating,
         hasBeenRead: false
       });
       await MongoChatItem.create({
@@ -989,7 +985,7 @@ describe('pushChatRecords', () => {
       });
 
       const chat = await MongoChat.findOne({ appId: testAppId, chatId: props.chatId });
-      expect(chat?.chatGenerateStatus).toBe(ChatGenerateStatusEnum.error);
+      expect(chat).not.toHaveProperty('chatGenerateStatus');
       expect(chat?.hasBeenRead).toBe(false);
 
       const aiItem = await MongoChatItem.findOne({
@@ -1705,20 +1701,24 @@ describe('pushChatRecords', () => {
           responseChatItemId: 'new-round',
           interactive
         });
-        expect(prepared.shouldFinalizePreparedRound).toBe(true);
-        await updateInteractiveChat({ ...props, interactive, shouldFinalizePreparedRound: true });
-        const records = await MongoChatItem.find({ ...source, deleteTime: null })
-          .sort({ _id: 1 })
-          .lean();
-        expect(records.map((item) => item.obj)).toEqual([
-          ChatRoleEnum.AI,
-          ChatRoleEnum.Human,
-          ChatRoleEnum.AI
-        ]);
-        expect(records[0].value).toEqual(original);
-        expect(records[1].value).toEqual([{ select }]);
-        expect(records[1].dataId).toBe('new-round');
-        expect(records[2].value[0].text?.content).toBe('Continued');
+        try {
+          expect(prepared.shouldFinalizePreparedRound).toBe(true);
+          await updateInteractiveChat({ ...props, interactive, shouldFinalizePreparedRound: true });
+          const records = await MongoChatItem.find({ ...source, deleteTime: null })
+            .sort({ _id: 1 })
+            .lean();
+          expect(records.map((item) => item.obj)).toEqual([
+            ChatRoleEnum.AI,
+            ChatRoleEnum.Human,
+            ChatRoleEnum.AI
+          ]);
+          expect(records[0].value).toEqual(original);
+          expect(records[1].value).toEqual([{ select }]);
+          expect(records[1].dataId).toBe('new-round');
+          expect(records[2].value[0].text?.content).toBe('Continued');
+        } finally {
+          await prepared.releaseGenerationLease?.();
+        }
       }
     );
 
