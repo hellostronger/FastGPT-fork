@@ -35,7 +35,8 @@ describe('validateSystemMigrationRegistry', () => {
       '20261022_backfill_folder_ancestor_ids',
       '20261025_token_prices_per_million',
       '20261022_initialize_dataset_vector_indexes',
-      '20261104_backfill_chat_publish_source'
+      '20261104_backfill_chat_publish_source',
+      '20261104_backfill_openapi_key_type'
     ]);
     expect(
       systemMigrations.filter((task: SystemMigration) => task.delay).map(({ id }) => id)
@@ -80,13 +81,13 @@ describe('validateSystemMigrationRegistry', () => {
     expect(task).not.toHaveProperty('onFailure');
   });
 
-  it('在4.18.0末尾登记独立自动来源回填，保持启动非阻塞且无依赖', () => {
+  it('在4.18.0末尾登记独立自动 Key 类型回填，保持启动非阻塞且无依赖', () => {
     const task = systemMigrations.at(-1);
     expect(task).toMatchObject({
-      id: '20261104_backfill_chat_publish_source',
+      id: '20261104_backfill_openapi_key_type',
       version: '4.18.0',
       independent: true,
-      progressSteps: [{ key: 'chats' }, { key: 'chatLogs' }, { key: 'validation' }]
+      progressSteps: [{ key: 'keys' }, { key: 'validation' }]
     });
     expect(task).not.toHaveProperty('blockStartup', true);
     expect(task).not.toHaveProperty('dependsOn');
@@ -105,7 +106,8 @@ describe('validateSystemMigrationRegistry', () => {
       '20261009_backfill_agent_sandbox_team_id',
       '20261022_backfill_folder_ancestor_ids',
       '20261025_token_prices_per_million',
-      '20261104_backfill_chat_publish_source'
+      '20261104_backfill_chat_publish_source',
+      '20261104_backfill_openapi_key_type'
     ]);
   });
 
