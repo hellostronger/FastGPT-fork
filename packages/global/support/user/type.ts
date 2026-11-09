@@ -31,6 +31,8 @@ export type UserModelSchema = {
   contact?: string | null;
   tags: UserTagsType[];
   meta?: UserMetaType;
+  /** 外部同步来源，如 weaver / wecom / feishu；用于同步匹配，不依赖 username 前缀。 */
+  syncSource?: string;
 };
 
 export const UserSchema = z.object({
