@@ -15,9 +15,14 @@ import {
 } from '../../../../ai/sandbox/application/runtime/entrypoint';
 import { prepareSandboxToolRuntime } from '../../../../ai/sandbox/application/toolCall';
 import { postTextCensor } from '../../../../chat/postTextCensor';
-import { readWorkflowFileBuffer } from '../../../utils/context';
+import { readWorkflowFileBuffer, getWorkflowSandboxContext } from '../../../utils/context';
 import { loadWorkflowModelResource } from '../../../resource/service';
-import { getAgentLoopHistories, getNodeErrResponse } from '../../utils';
+import {
+  getAgentLoopHistories,
+  getNodeErrResponse,
+  removeUnfinishedInteractiveHistories
+} from '../../utils';
+import { WorkflowMemoryState } from '../../../memory/state';
 import { buildAgentLoopCoreRequestMessages } from '../agentLoopCore/application/context/messages';
 import { createAgentLoopCoreChildInteractiveParams } from '../agentLoopCore/adapter/interactive/child';
 import { createAgentLoopCoreToolCallNodeResponse } from '../agentLoopCore/adapter/nodeResponse/toolCallNodeResponse';
@@ -66,15 +71,23 @@ export const dispatchRunTools = async (props: DispatchToolModuleProps): Promise<
     }
   } = props;
 
-  const isAppChat = runningAppInfo.sourceType === ChatSourceTypeEnum.app;
+  const sandboxContext = getWorkflowSandboxContext({
+    sourceType: runningAppInfo.sourceType,
+    sourceId: runningAppInfo.sourceId,
+    teamId: runningAppInfo.teamId,
+    userId: props.uid,
+    chatId: props.chatId
+  });
+  const { sourceType: sandboxSourceType, sourceId: sandboxSourceId } = sandboxContext;
+  const isAppChat = sandboxSourceType === ChatSourceTypeEnum.app;
   const appSandboxAvailability = isAppChat
     ? await resolveAppSandboxAvailability({
         appEnabled: !!useAgentSandbox,
-        teamId: runningAppInfo.teamId
+        teamId: sandboxContext.teamId
       })
     : undefined;
   if (!isAppChat && useAgentSandbox) {
-    await assertSandboxAvailable(runningAppInfo.teamId);
+    await assertSandboxAvailable(sandboxContext.teamId);
   }
 
   const useSandbox = isAppChat ? appSandboxAvailability?.available === true : !!useAgentSandbox;
@@ -129,23 +142,24 @@ export const dispatchRunTools = async (props: DispatchToolModuleProps): Promise<
     const sandboxClient = useSandbox
       ? await ensureWorkflowSandboxReadyForUse({
           workflowStreamResponse: props.workflowStreamResponse,
-          sourceType: runningAppInfo.sourceType,
-          sourceId: runningAppInfo.sourceId,
-          userId: props.uid,
-          chatId: props.chatId,
+          sourceType: sandboxSourceType,
+          sourceId: sandboxSourceId,
+          userId: sandboxContext.userId,
+          chatId: sandboxContext.chatId,
+          teamId: sandboxContext.teamId,
           prepareRuntime: () =>
             withAgentSandboxInitLease({
               sandboxId: getRunningSandboxId({
-                sourceType: props.runningAppInfo.sourceType,
-                sourceId: props.runningAppInfo.sourceId,
-                userId: props.uid
+                sourceType: sandboxSourceType,
+                sourceId: sandboxSourceId,
+                userId: sandboxContext.userId
               }),
               fn: async () => {
                 const runtime = await prepareSandboxToolRuntime({
-                  sourceType: props.runningAppInfo.sourceType,
-                  sourceId: props.runningAppInfo.sourceId,
-                  userId: props.uid,
-                  chatId: props.chatId,
+                  sourceType: sandboxSourceType,
+                  sourceId: sandboxSourceId,
+                  userId: sandboxContext.userId,
+                  chatId: sandboxContext.chatId,
                   readInputFile: (url) => readWorkflowFileBuffer({ url }),
                   files: currentInputFiles.map((file) => ({
                     path: file.sandboxPath!,
@@ -157,6 +171,7 @@ export const dispatchRunTools = async (props: DispatchToolModuleProps): Promise<
                   await runAgentSandboxEntrypoint({
                     sandbox: runtime.provider,
                     sandboxEntrypoint: effectiveEntrypoint,
+                    scope: `${runningAppInfo.sourceType}:${runningAppInfo.sourceId}:node:${nodeId}`,
                     workDirectory: getSandboxRuntimeProfile().workDirectory
                   });
                 }
@@ -165,6 +180,9 @@ export const dispatchRunTools = async (props: DispatchToolModuleProps): Promise<
             })
         })
       : undefined;
+    if (useSandbox) {
+      props.nodeSummary?.mergeNodeSummary({ hasAgentSandbox: true });
+    }
 
     // 未配置独立模型密钥时，沿用系统文本审核逻辑。
     if (toolModel.config.censor && !externalProvider.openaiAccount?.key) {
@@ -174,6 +192,12 @@ export const dispatchRunTools = async (props: DispatchToolModuleProps): Promise<
         `
       });
     }
+
+    const toolCallMemoryState = WorkflowMemoryState.fromWorkflow(props).fork(`node:${nodeId}`, {
+      history,
+      histories: chatHistories,
+      hasInteractiveResume: !!lastInteractive
+    });
 
     const {
       toolWorkflowInteractiveResponse,
@@ -195,6 +219,7 @@ export const dispatchRunTools = async (props: DispatchToolModuleProps): Promise<
 
       return runToolCall({
         ...props,
+        memoryState: toolCallMemoryState,
         currentInputFiles,
         sandboxClient,
         runtimeNodes,
@@ -207,6 +232,8 @@ export const dispatchRunTools = async (props: DispatchToolModuleProps): Promise<
         })
       });
     })();
+    const toolMemories = toolCallMemoryState.getDelta();
+    const systemMemories = Object.keys(toolMemories).length > 0 ? toolMemories : undefined;
     const { runTimes, toolDetail } =
       summarizeAgentLoopCoreToolRunFlowResponses(toolDispatchFlowResponses);
     // 有 sink 时 child workflow 和当前 ToolCall 的内部 response 已经独立发布；
@@ -228,13 +255,21 @@ export const dispatchRunTools = async (props: DispatchToolModuleProps): Promise<
       firstTokenTime
     });
 
+    const rewrittenHistories = lastInteractive
+      ? removeUnfinishedInteractiveHistories(histories)
+      : undefined;
+
     if (error) {
       return {
         ...getNodeErrResponse({
           error,
           [DispatchNodeResponseKeyEnum.nodeResponse]: nodeResponse,
-          [DispatchNodeResponseKeyEnum.runTimes]: runTimes
+          [DispatchNodeResponseKeyEnum.runTimes]: runTimes,
+          [DispatchNodeResponseKeyEnum.memories]: systemMemories
         }),
+        ...(rewrittenHistories
+          ? { [DispatchNodeResponseKeyEnum.rewriteHistories]: rewrittenHistories }
+          : {}),
         [DispatchNodeResponseKeyEnum.assistantResponses]: isResponseAnswerText
           ? assistantResponses
           : undefined
@@ -247,6 +282,7 @@ export const dispatchRunTools = async (props: DispatchToolModuleProps): Promise<
         [DispatchNodeResponseKeyEnum.assistantResponses]: isResponseAnswerText
           ? assistantResponses
           : undefined,
+        [DispatchNodeResponseKeyEnum.memories]: systemMemories,
         [DispatchNodeResponseKeyEnum.nodeResponse]: nodeResponse,
         [DispatchNodeResponseKeyEnum.interactive]: toolWorkflowInteractiveResponse
       };
@@ -263,6 +299,10 @@ export const dispatchRunTools = async (props: DispatchToolModuleProps): Promise<
       [DispatchNodeResponseKeyEnum.assistantResponses]: isResponseAnswerText
         ? assistantResponses
         : undefined,
+      [DispatchNodeResponseKeyEnum.memories]: systemMemories,
+      ...(rewrittenHistories
+        ? { [DispatchNodeResponseKeyEnum.rewriteHistories]: rewrittenHistories }
+        : {}),
       [DispatchNodeResponseKeyEnum.nodeResponse]: nodeResponse,
       [DispatchNodeResponseKeyEnum.interactive]: toolWorkflowInteractiveResponse
     };

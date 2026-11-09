@@ -22,6 +22,7 @@ import {
   ChatFileTypeEnum,
   ChatGenerateStatusEnum,
   ChatRoleEnum,
+  ChatSourceEnum,
   ChatSourceTypeEnum
 } from '@fastgpt/global/core/chat/constants';
 import {
@@ -611,6 +612,38 @@ describe('pushChatRecords', () => {
       });
     });
 
+    it('should strip client appSandboxEnabled metadata on non-test chats and persist runtime hasAgentSandbox in summary', async () => {
+      const props = createMockProps(
+        {
+          chatId: 'sandbox-security-chat',
+          source: ChatSourceEnum.api,
+          metadata: {
+            source: 'api',
+            appSandboxEnabled: true
+          },
+          workflowRuntimeSummary: {
+            citeCollectionIds: [],
+            errorCount: 0,
+            totalPoints: 0,
+            llmInputTokens: 3,
+            llmOutputTokens: 5,
+            hasAgentSandbox: true
+          }
+        },
+        { appId: testAppId, teamId: testTeamId, tmbId: testTmbId }
+      );
+
+      await pushChatRecords(props);
+
+      const chat = await MongoChat.findOne({ appId: testAppId, chatId: props.chatId }).lean();
+      expect(chat?.metadata).toEqual({ source: 'api' });
+      expect(chat?.summary).toEqual({
+        llmInputTokens: 3,
+        llmOutputTokens: 5,
+        hasAgentSandbox: true
+      });
+    });
+
     it('should track duration seconds', async () => {
       const props = createMockProps(
         {
@@ -879,6 +912,73 @@ describe('pushChatRecords', () => {
   });
 
   describe('updateInteractiveChat function', () => {
+    it('preserves root canonical memories while cleaning legacy child memories on submit', async () => {
+      const rootKey = `app:${testAppId}:extract_1`;
+      const recursiveKey = `node:reenter/app:${testAppId}:extract_1`;
+      const legacyChildKey = 'app:child-app:extract_1';
+      const scopedChildKey = 'node:child/app:child-app:extract_1';
+      const rootMemory = { city: 'root-city' };
+      await MongoChatItem.create({
+        chatId: 'test-chat-id',
+        teamId: testTeamId,
+        tmbId: testTmbId,
+        sourceType: ChatSourceTypeEnum.app,
+        appId: testAppId,
+        obj: ChatRoleEnum.AI,
+        dataId: 'memory-submit',
+        memories: {
+          [rootKey]: rootMemory,
+          [legacyChildKey]: { stale: true },
+          'agentLoopMemory-child_agent': { providerState: { old: true } }
+        },
+        value: [
+          {
+            interactive: {
+              type: 'userSelect',
+              params: { userSelectedVal: undefined, options: ['Continue'] }
+            }
+          }
+        ]
+      });
+      const props = createMockProps(
+        {
+          userContent: { obj: ChatRoleEnum.Human, value: [{ text: { content: 'Continue' } }] },
+          aiContent: {
+            obj: ChatRoleEnum.AI,
+            value: [],
+            memories: {
+              [recursiveKey]: { city: 'recursive-city' },
+              [scopedChildKey]: { updated: true },
+              'node:child/app:child-app:child_agent': undefined
+            }
+          }
+        },
+        { appId: testAppId, teamId: testTeamId, tmbId: testTmbId }
+      );
+      await updateInteractiveChat({
+        ...props,
+        interactive: {
+          type: 'userSelect',
+          entryNodeIds: [],
+          memoryEdges: [],
+          nodeOutputs: [],
+          params: { description: '', userSelectOptions: [{ key: 'continue', value: 'Continue' }] }
+        }
+      });
+
+      const saved = await MongoChatItem.findOne({
+        appId: testAppId,
+        chatId: props.chatId,
+        obj: ChatRoleEnum.AI
+      }).lean();
+      if (!saved || saved.obj !== ChatRoleEnum.AI) throw new Error('AI chat item was not saved');
+      expect(saved.memories).toEqual({
+        [rootKey]: rootMemory,
+        [recursiveKey]: { city: 'recursive-city' },
+        [scopedChildKey]: { updated: true }
+      });
+    });
+
     it.each(['agentAsk', 'workflowBuilderPreview'] as const)(
       'does not persist or reject an ephemeral %s reply',
       async (type) => {

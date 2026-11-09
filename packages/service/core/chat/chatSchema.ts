@@ -115,6 +115,9 @@ const ChatSchema = new Schema({
       llmOutputTokens: {
         type: Number,
         default: 0
+      },
+      hasAgentSandbox: {
+        type: Boolean
       }
     },
     _id: false,

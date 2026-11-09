@@ -19,7 +19,6 @@ import {
   filterWorkflowToolInputVariables,
   getWorkflowToolInputsFromStoreNodes
 } from '@fastgpt/global/core/app/tool/workflowTool/utils';
-import { appData2FlowNodeIO } from '@fastgpt/global/common/app/workflow';
 import { SystemToolRepo } from '../../../../../../app/tool/systemTool/systemTool.repo';
 import { anyValueDecrypt } from '../../../../../../../common/secret/utils';
 import {
@@ -29,7 +28,9 @@ import {
 } from '../../../../utils/variables';
 import { getWorkflowRuntimeSummary, runtimeSummaryToNodeSummary } from '../../../../utils/summary';
 import { ChatSourceTypeEnum } from '@fastgpt/global/core/chat/constants';
+import { runChildAppWorkflow } from '../../../../child/runApp';
 import { runWithDerivedWorkflowFileContext } from '../../../../../utils/context';
+import { WorkflowMemoryState } from '../../../../../memory/state';
 import {
   computedAppToolUsage,
   getAppToolOwnUsage,
@@ -57,6 +58,7 @@ type Props = Pick<
   | 'nodeResponseSink'
   | 'nodeResponseParentId'
   | 'variableState'
+  | 'memoryState'
   | 'lastInteractive'
   | 'query'
 > & {
@@ -74,107 +76,16 @@ type Props = Pick<
 };
 
 export const dispatchApp = async (props: Props): Promise<DispatchSubAppResponse> => {
-  const {
-    runningAppInfo,
-    runningUserInfo,
-    app,
-    variableState,
-    customAppVariables,
-    userChatInput,
-    ...data
-  } = props;
-
-  const { appData, childVersion, resourceContext } = await loadChildWorkflowWithResource({
-    appId: app.id,
-    versionId: app.version,
-    tmbId: runningUserInfo.tmbId,
-    type: 'tool'
-  });
-  const { nodes, edges, chatConfig } = childVersion;
-  const workflowToolVariables = filterWorkflowToolInputVariables({
-    inputs: appData2FlowNodeIO({ chatConfig }).inputs,
-    variables: customAppVariables
-  });
-
-  // Rewrite children app variables
-  const { externalProvider } = await getUserChatInfo(appData.tmbId);
-  const childRunningAppInfo = {
-    sourceType: ChatSourceTypeEnum.app,
-    sourceId: String(appData._id),
-    teamId: String(appData.teamId),
-    tmbId: String(appData.tmbId),
-    name: appData.name,
-    isChildApp: true
-  };
-  // 恢复 AgentV2 子工作流时，入口节点、节点输出和记忆边必须沿用暂停快照。
-  // 仅把 lastInteractive 传给 runWorkflow 不足以恢复队列：运行时节点和边在进入
-  // WorkflowQueue 前已经被重新初始化了。
-  const runtimeNodes = rewriteNodeOutputByHistories(
-    storeNodes2RuntimeNodes(nodes, getWorkflowEntryNodeIds(nodes, data.lastInteractive)),
-    data.lastInteractive
-  );
-  const runtimeEdges = storeEdges2RuntimeEdges(edges, data.lastInteractive);
-
-  const { assistantResponses, flowUsages, workflowRuntimeSummary, workflowInteractiveResponse } =
-    await runWithDerivedWorkflowFileContext({
-      files: getWorkflowFileVariableInputs({
-        variablesConfig: chatConfig.variables ?? [],
-        inputVariables: workflowToolVariables
-      }),
-      resourceContext,
-      fn: async ({ resolveInputFile }) => {
-        const childrenVariableState = await WorkflowVariableState.create({
-          timezone: data.timezone,
-          runningAppInfo: childRunningAppInfo,
-          chatId: data.chatId,
-          responseChatItemId: data.responseChatItemId,
-          histories: [],
-          uid: data.uid,
-          variablesConfig: chatConfig.variables ?? [],
-          inputVariables: workflowToolVariables,
-          externalVariables: externalProvider?.externalWorkflowVariables,
-          sourceVariableState: variableState,
-          resolveInputFile
-        });
-
-        return runWorkflow({
-          ...data,
-          runningAppInfo: {
-            sourceType: ChatSourceTypeEnum.app,
-            sourceId: String(appData._id),
-            name: appData.name,
-            teamId: String(appData.teamId),
-            tmbId: String(appData.tmbId),
-            isChildApp: true
-          },
-          runningUserInfo,
-          runtimeNodes,
-          runtimeEdges,
-          chatConfig,
-          histories: [],
-          variableState: childrenVariableState,
-          isToolCall: true,
-          // 初次调用使用工具参数；交互恢复时必须使用当前外层用户输入，
-          // 其中包含表单/选择节点提交的 JSON，否则子流程会从暂停节点再次生成交互。
-          query: data.lastInteractive
-            ? data.query
-            : [
-                {
-                  text: {
-                    content: userChatInput
-                  }
-                }
-              ],
-          stream: false,
-          workflowStreamResponse: undefined
-        });
-      }
+  const { app, customAppVariables, userChatInput, ...data } = props;
+  const { flowUsages, workflowInteractiveResponse, resolvedVariables, text, runtimeSummary } =
+    await runChildAppWorkflow({
+      ...data,
+      appId: app.id,
+      versionId: app.version,
+      resourceType: 'tool',
+      userChatInput,
+      rawVariables: customAppVariables
     });
-
-  const { text } = chatValue2RuntimePrompt(assistantResponses);
-  const runtimeSummary = getWorkflowRuntimeSummary({
-    workflowRuntimeSummary
-  });
 
   // AgentV2 子应用固定关闭 stream；子流程 transcript 不属于父 Agent 的上下文，
   // 仅通过 response/nodeResponse/usage/interactive 返回，避免 child answer 被重复拼入最终回答。
@@ -193,7 +104,7 @@ export const dispatchApp = async (props: Props): Promise<DispatchSubAppResponse>
       totalPoints: 0,
       toolInput: {
         userChatInput,
-        ...workflowToolVariables
+        ...resolvedVariables
       },
       toolRes: text,
       childResponseCount: runtimeSummary.childResponseCount
@@ -211,6 +122,7 @@ export const dispatchPlugin = async (props: Props): Promise<DispatchSubAppRespon
     userChatInput,
     ...data
   } = props;
+  const memoryState = WorkflowMemoryState.fromWorkflow(props);
   // plugin 子应用不接收普通 userChatInput；这里解构只为了避免透传给 runWorkflow。
   void userChatInput;
 
@@ -320,7 +232,8 @@ export const dispatchPlugin = async (props: Props): Promise<DispatchSubAppRespon
     assistantResponses = [],
     flowUsages,
     workflowRuntimeSummary,
-    workflowInteractiveResponse
+    workflowInteractiveResponse,
+    system_memories
   } = await runWithDerivedWorkflowFileContext({
     files: childFileInputs,
     resourceContext,
@@ -382,18 +295,12 @@ export const dispatchPlugin = async (props: Props): Promise<DispatchSubAppRespon
           showStatus: false
         };
       });
+      const childMemoryState = memoryState.fork(`app:${childRunningAppInfo.sourceId}`);
 
       return runWorkflow({
         ...data,
-        runningAppInfo: {
-          sourceType: ChatSourceTypeEnum.app,
-          sourceId: childAppInfo.sourceId,
-          // 如果系统插件有 teamId 和 tmbId，则使用系统插件的 teamId 和 tmbId（管理员指定了插件作为系统插件）
-          name: childAppInfo.name,
-          teamId: childAppInfo.teamId || runningAppInfo.teamId,
-          tmbId: childAppInfo.tmbId || runningAppInfo.tmbId,
-          isChildApp: true
-        },
+        memoryState: childMemoryState,
+        runningAppInfo: childRunningAppInfo,
         runningUserInfo,
         runtimeNodes,
         runtimeEdges: storeEdges2RuntimeEdges(edges, data.lastInteractive),
@@ -415,6 +322,7 @@ export const dispatchPlugin = async (props: Props): Promise<DispatchSubAppRespon
       });
     }
   });
+  memoryState.merge(system_memories);
 
   const runtimeSummary = getWorkflowRuntimeSummary({
     workflowRuntimeSummary

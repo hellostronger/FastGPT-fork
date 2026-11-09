@@ -14,6 +14,7 @@ import {
 import { ModelTypeEnum } from '@fastgpt/global/core/ai/constants';
 import { isEmptyModelValue } from '@fastgpt/global/core/ai/model/reference';
 import { DatasetSearchModeEnum } from '@fastgpt/global/core/dataset/constants';
+import type { ReferenceItemValueType } from '@fastgpt/global/core/workflow/type/io';
 import MyModal from '@fastgpt/web/components/v2/common/MyModal';
 import { useTranslation } from 'next-i18next';
 import { useMemo, useState } from 'react';
@@ -42,6 +43,16 @@ enum SearchSettingTabEnum {
   tagFilter = 'tagFilter'
 }
 
+export type DatasetParamsModalFormType = Omit<
+  AppDatasetSearchParamsType,
+  'collectionFilterMatch'
+> & {
+  collectionFilterMatch?:
+    | AppDatasetSearchParamsType['collectionFilterMatch']
+    | ReferenceItemValueType
+    | [];
+};
+
 const DatasetParamsModal = ({
   searchMode = DatasetSearchModeEnum.embedding,
   limit,
@@ -57,13 +68,13 @@ const DatasetParamsModal = ({
   datasetSearchExtensionBg,
   collectionFilterMatch,
   showTagFilter = false,
-  datasetIds = [],
+  datasetIds,
   tagFilterReferenceList = [],
   maxTokens,
   appId,
   onClose,
   onSuccess
-}: AppDatasetSearchParamsType & {
+}: DatasetParamsModalFormType & {
   showTagFilter?: boolean;
   datasetIds?: string[];
   tagFilterReferenceList?: TagFilterReferenceList;
@@ -78,7 +89,7 @@ const DatasetParamsModal = ({
   const [currentTabType, setCurrentTabType] = useState(SearchSettingTabEnum.searchMode);
 
   // 固定本次弹窗的初始值；values 接受完整业务类型，避免 DeepPartial 将 unknown 条件值收窄成对象。
-  const [initialValues] = useState<AppDatasetSearchParamsType>(() => ({
+  const [initialValues] = useState<DatasetParamsModalFormType>(() => ({
     searchMode,
     embeddingWeight: embeddingWeight ?? 0.5,
     usingReRank: !!usingReRank,
@@ -95,7 +106,7 @@ const DatasetParamsModal = ({
     ...(showTagFilter ? { collectionFilterMatch } : {})
   }));
   const { register, setValue, getValues, handleSubmit, watch } =
-    useForm<AppDatasetSearchParamsType>({ values: initialValues });
+    useForm<DatasetParamsModalFormType>({ values: initialValues });
 
   const searchModeWatch = watch('searchMode');
   const embeddingWeightWatch = watch('embeddingWeight');
@@ -165,7 +176,7 @@ const DatasetParamsModal = ({
                   datasetSearchExtensionModel: _extensionModel,
                   ...canonicalValues
                 } = values;
-                onSuccess(canonicalValues);
+                onSuccess(canonicalValues as AppDatasetSearchParamsType);
                 onClose();
               })();
             }}
