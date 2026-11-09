@@ -63,6 +63,11 @@ const UserSchema = new Schema({
     type: [String],
     enum: UserTagsSchema.enum
   },
+  /** 外部同步来源；设置后同步按来源匹配，不再依赖 username 前缀。 */
+  syncSource: {
+    type: String,
+    required: false
+  },
   meta: Object,
   /** @deprecated */
   avatar: String
@@ -73,6 +78,8 @@ defineIndex(UserSchema, {
   key: { username: 1 },
   options: { unique: true }
 });
+// 外部同步按来源筛选成员。
+defineIndex(UserSchema, { key: { syncSource: 1 } });
 // 管理端用户列表按状态过滤并按 _id 倒序分页，复合索引可同时满足过滤和排序。
 defineIndex(UserSchema, { key: { status: 1, _id: -1 } });
 // Admin charts
