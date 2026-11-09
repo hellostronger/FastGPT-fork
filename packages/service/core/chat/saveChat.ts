@@ -629,6 +629,9 @@ export const pushChatRecords = async (props: Props) => {
             chatGenerateStatus: ChatGenerateStatusEnum.done
           },
           $setOnInsert: {
+            // 旧兼容路径首次创建会话时同样需要写入 schema 必填的 source 与 publishSource。
+            source,
+            publishSource: props.publishSource ?? { type: source },
             createTime: new Date()
           },
           $inc: {
