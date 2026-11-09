@@ -15,6 +15,7 @@ import {
   ChatFileTypeEnum,
   ChatGenerateStatusEnum,
   ChatRoleEnum,
+  ChatSourceEnum,
   ChatSourceTypeEnum
 } from '@fastgpt/global/core/chat/constants';
 import { AppTypeEnum } from '@fastgpt/global/core/app/constants';
@@ -238,6 +239,44 @@ describe('prepare chat round', () => {
 
     const chat = await MongoChat.findOne({ appId: testAppId, chatId: params.chatId });
     expect(chat?.chatGenerateStatus).toBe(ChatGenerateStatusEnum.error);
+  });
+
+  it('should record the latest publish source for new and interactive-continue rounds', async () => {
+    const publishSource = { type: ChatSourceEnum.api, id: testAppId };
+    const params = createPreChatRoundParams(
+      { source: ChatSourceEnum.api, publishSource, sourceName: '本次渠道' },
+      { appId: testAppId, teamId: testTeamId, tmbId: testTmbId }
+    );
+    const prepared = await preChatRound(params);
+
+    expect(prepared.publishSource).toMatchObject({ type: ChatSourceEnum.api, id: testAppId });
+    const chat = await MongoChat.findOne({ appId: testAppId, chatId: prepared.chatId }).lean();
+    expect(String(chat?.publishSource?.id)).toBe(testAppId);
+    expect(chat?.sourceName).toBe('本次渠道');
+
+    // 1.6.x 的生成锁在上一轮结束后才会释放；交互续跑前先模拟本轮完成。
+    await MongoChat.updateOne(
+      { appId: testAppId, chatId: prepared.chatId },
+      { $set: { chatGenerateStatus: ChatGenerateStatusEnum.done } }
+    );
+
+    await MongoChatItem.create({
+      appId: testAppId,
+      sourceType: ChatSourceTypeEnum.app,
+      teamId: testTeamId,
+      tmbId: testTmbId,
+      chatId: prepared.chatId,
+      obj: ChatRoleEnum.AI,
+      dataId: 'previous-ai',
+      value: []
+    });
+    const continued = await preChatRound({
+      ...params,
+      chatId: prepared.chatId,
+      interactive: { type: 'userSelect', params: {} } as any
+    });
+    expect(continued.responseChatItemId).toBe('previous-ai');
+    expect(continued.publishSource).toMatchObject({ type: ChatSourceEnum.api, id: testAppId });
   });
 
   it('should reuse previous AI dataId for interactive continue without creating placeholders', async () => {
