@@ -68,7 +68,6 @@ const DatasetParamsModal = ({
   datasetSearchExtensionBg,
   collectionFilterMatch,
   showTagFilter = false,
-  canSwitchTagFilterMode = false,
   datasetIds,
   tagFilterReferenceList = [],
   maxTokens,
@@ -77,7 +76,6 @@ const DatasetParamsModal = ({
   onSuccess
 }: DatasetParamsModalFormType & {
   showTagFilter?: boolean;
-  canSwitchTagFilterMode?: boolean;
   datasetIds?: string[];
   tagFilterReferenceList?: TagFilterReferenceList;
   maxTokens?: number; // limit max tokens

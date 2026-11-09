@@ -244,7 +244,6 @@ export const SwitchAuthTmb = React.memo(function SwitchAuthTmb({
           appId={appId || undefined}
           maxTokens={llmMaxQuoteContext}
           showTagFilter={!!feConfigs?.isPlus}
-          canSwitchTagFilterMode
           datasetIds={datasetIds}
           tagFilterReferenceList={referenceList}
           onClose={onCloseDatasetParams}
