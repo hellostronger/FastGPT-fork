@@ -38,7 +38,15 @@ describe('chat schema indexes', () => {
     expect(sourceAwareIndex?.[1]?.unique).toBe(true);
   });
 
-  it('does not register historical chat indexes for automatic cleanup', () => {
+  it('keeps deprecated share data and its index, and registers no historical index for cleanup', () => {
+    expect(MongoChat.schema.path('shareId')).toBeDefined();
+    expect(
+      hasIndex(MongoChat.schema.indexes(), { shareId: 1, outLinkUid: 1, updateTime: -1 })
+    ).toBe(true);
+    // 1.6.x still relies on chatGenerateStatus for the generate lock, so it stays an active index.
+    expect(
+      hasIndex(MongoChat.schema.indexes(), { chatGenerateStatus: 1, updateTime: 1 })
+    ).toBe(true);
     expect(getSchemaDeprecatedMongoIndexes(MongoChat.schema)).toEqual([]);
   });
 

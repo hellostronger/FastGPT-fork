@@ -1,3 +1,5 @@
+import type { ChatPublishSourceType } from '@fastgpt/global/core/chat/publishSource/type';
+import { updateChatPublishSource } from '../publishSource/service';
 import { ChatErrEnum } from '@fastgpt/global/common/error/code/chat';
 import { getNanoid } from '@fastgpt/global/common/string/tools';
 import { ChatGenerateStatusEnum, ChatRoleEnum } from '@fastgpt/global/core/chat/constants';
@@ -50,6 +52,7 @@ export type PrepareChatRoundParams = ChatSourceParams & {
   teamId: string;
   tmbId: string;
   source: `${ChatSourceEnum}`;
+  publishSource?: ChatPublishSourceType;
   sourceName?: string;
   shareId?: string;
   outLinkUid?: string;
@@ -71,6 +74,7 @@ export type PreChatRoundParams = Omit<PrepareChatRoundParams, 'chatId' | 'respon
 };
 
 export type PreChatRoundResult = {
+  publishSource?: ChatPublishSourceType;
   chatId: string;
   responseChatItemId: string;
   shouldPersistChatRound: boolean;
@@ -273,9 +277,13 @@ export const preChatRound = async (params: PreChatRoundParams): Promise<PreChatR
         throw new Error(`Interactive continue chat item not found: ${chatId}`);
       }
 
+      // 交互续跑复用原 AI，先确认记录有效，再在 preChat 中记录本次来源。
+      const publishSource = await updateChatPublishSource({ ...params, chatId });
+
       return {
         chatId,
         responseChatItemId: previousAiItem.dataId,
+        publishSource,
         shouldPersistChatRound: true,
         shouldFinalizePreparedRound: false
       };
@@ -288,6 +296,8 @@ export const preChatRound = async (params: PreChatRoundParams): Promise<PreChatR
       userContent: params.userContent,
       responseChatItemId
     });
+
+    const publishSource = await updateChatPublishSource({ ...params, chatId });
 
     const preparedChatRound = await prepareChatRound({
       ...params,
@@ -313,6 +323,7 @@ export const preChatRound = async (params: PreChatRoundParams): Promise<PreChatR
     return {
       chatId,
       responseChatItemId,
+      publishSource,
       shouldPersistChatRound: true,
       shouldFinalizePreparedRound: true,
       titleGeneration

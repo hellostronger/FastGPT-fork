@@ -1,3 +1,4 @@
+import type { ChatPublishSourceType } from '@fastgpt/global/core/chat/publishSource/type';
 import type {
   AIChatItemType,
   AIChatItemValueItemType,
@@ -57,8 +58,8 @@ export type Props = ChatSourceParams & {
   appChatConfig?: AppChatConfigType;
   variables?: Record<string, any>;
   source: `${ChatSourceEnum}`;
+  publishSource?: ChatPublishSourceType;
   sourceName?: string;
-  shareId?: string;
   outLinkUid?: string;
   userContent: UserChatItemType & { dataId?: string };
   aiContent: AIChatItemType & { dataId?: string };
@@ -269,7 +270,6 @@ export const finalizeChatRound = async (props: Props) => {
     variables,
     source,
     sourceName,
-    shareId,
     outLinkUid,
     userContent,
     aiContent,
@@ -382,9 +382,6 @@ export const finalizeChatRound = async (props: Props) => {
           welcomeText,
           variables: variables || {},
           pluginInputs,
-          source,
-          sourceName,
-          shareId,
           outLinkUid,
           metadata: metadataUpdate,
           ...(runtimeChatSummary.hasAgentSandbox ? { 'summary.hasAgentSandbox': true } : {}),
@@ -459,8 +456,7 @@ export const finalizeChatRound = async (props: Props) => {
             totalResponseTime: durationSeconds
           },
           $set: {
-            updateTime: now,
-            sourceName
+            updateTime: now
           },
           $setOnInsert: {
             appId: appSourceId,
@@ -468,6 +464,8 @@ export const finalizeChatRound = async (props: Props) => {
             chatId,
             userId,
             source,
+            publishSource: props.publishSource ?? { type: source },
+            ...(props.publishSource?.id && sourceName ? { sourceName } : {}),
             createTime: now,
             goodFeedbackCount: 0,
             badFeedbackCount: 0,
@@ -550,7 +548,6 @@ export const pushChatRecords = async (props: Props) => {
     variables,
     source,
     sourceName,
-    shareId,
     outLinkUid,
     userContent,
     aiContent,
@@ -625,9 +622,6 @@ export const pushChatRecords = async (props: Props) => {
             welcomeText,
             variables: variables || {},
             pluginInputs,
-            source,
-            sourceName,
-            shareId,
             outLinkUid,
             metadata: metadataUpdate,
             ...(runtimeChatSummary.hasAgentSandbox ? { 'summary.hasAgentSandbox': true } : {}),
@@ -635,6 +629,9 @@ export const pushChatRecords = async (props: Props) => {
             chatGenerateStatus: ChatGenerateStatusEnum.done
           },
           $setOnInsert: {
+            // 旧兼容路径首次创建会话时同样需要写入 schema 必填的 source 与 publishSource。
+            source,
+            publishSource: props.publishSource ?? { type: source },
             createTime: new Date()
           },
           $inc: {
@@ -706,8 +703,7 @@ export const pushChatRecords = async (props: Props) => {
               totalResponseTime: durationSeconds
             },
             $set: {
-              updateTime: now,
-              sourceName
+              updateTime: now
             },
             $setOnInsert: {
               appId: appSourceId,
@@ -715,6 +711,8 @@ export const pushChatRecords = async (props: Props) => {
               chatId,
               userId,
               source,
+              publishSource: props.publishSource ?? { type: source },
+              ...(props.publishSource?.id && sourceName ? { sourceName } : {}),
               createTime: now,
               goodFeedbackCount: 0,
               badFeedbackCount: 0,
