@@ -4,6 +4,10 @@ import { getTestMaxWorkers } from '../../test/vitestWorkers';
 
 export default defineConfig({
   resolve: {
+    // 单一 zod 副本：避免 packages/* 与根级依赖各自解析出不同 zod（外层 4.4.3），
+    // 跨副本的 globalRegistry/instanceof 失效会让 .meta() 读不到、快照校验按
+    // 另一份 zod 的语义走，表现为并行偶发红、串行全绿。
+    dedupe: ['zod'],
     alias: {
       '@': resolve('../../projects/app/src'),
       '@fastgpt-sdk/storage/access-link': resolve('../../sdk/storage/src/access-link/index.ts'),

@@ -3,6 +3,9 @@ import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
   resolve: {
+    // 与 service/根配置保持一致：强制全图共用一份 zod，避免跨副本的
+    // globalRegistry/instanceof 失效（.meta() 丢失、语义随副本漂移）。
+    dedupe: ['zod'],
     alias: {
       '@fastgpt-sdk/otel/logger': resolve('../../sdk/otel/src/logger-entry.ts'),
       '@fastgpt': resolve('..')
