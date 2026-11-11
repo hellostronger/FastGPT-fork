@@ -79,7 +79,10 @@ describe('runAuxiliaryGeneration connection lifecycle', () => {
     await vi.waitFor(() => expect(checkIsStopping()).toBe(true));
     finishProcessor.resolve();
     await expect(run).resolves.toMatchObject({ aiResponse: [] });
-    expect(mocks.clearStop).toHaveBeenCalledTimes(1);
+    // 两次 clear 均为预期行为：runAuxiliaryGeneration 开始前清一次上一轮遗留的停止标记
+    // （该路径不获取 generationLease，没有按快照清理的兜底），停止控制器 cleanup 收尾再清一次。
+    // 两次 delete 幂等、无害。
+    expect(mocks.clearStop).toHaveBeenCalledTimes(2);
   });
 
   it('cleans up the stream when usage initialization fails before the processor starts', async () => {
@@ -113,6 +116,7 @@ describe('runAuxiliaryGeneration connection lifecycle', () => {
     expect(stream.flushResume).toHaveBeenCalledOnce();
     expect(stream.cleanup).toHaveBeenCalledOnce();
     expect(processor).not.toHaveBeenCalled();
-    expect(mocks.clearStop).toHaveBeenCalledOnce();
+    // 同上：开始前清遗留 + 收尾 cleanup 各一次，共 2 次。
+    expect(mocks.clearStop).toHaveBeenCalledTimes(2);
   });
 });
