@@ -29,7 +29,9 @@ import {
 import { delay } from '@fastgpt/global/common/system/utils';
 import { buildChatSourceQuery } from '@fastgpt/service/core/chat/source';
 import { parseApiInput } from '@fastgpt/service/common/zod/requestParseError';
+import { getLogger, LogCategories } from '@fastgpt/service/common/logger';
 
+const logger = getLogger(LogCategories.MODULE.CHAT.RESUME);
 const completedChatPageSize = 10;
 const resumeUnavailablePollIntervalMs = 3000;
 const resumeUnavailableMaxWaitMs = STREAM_RESUME_TTL_SECONDS * 1000;
@@ -253,15 +255,21 @@ async function handler(req: NextApiRequest, res: NextApiResponse) {
   await _resume({ res, teamId, sourceType, sourceId: resolvedSourceId, chatId, cursor });
 
   // 进程退出不会再写 done 事件；阻塞读取发现 lease 失效后，补齐持久化记录并结束恢复。
-  if (!isResponseClosed(res)) {
-    const chat = await findCurrentChat();
-    if (chat.chatGenerateStatus !== ChatGenerateStatusEnum.generating) {
-      await makeSureTheCompletedChatHasBeenRead();
-      writeSseEvent(res, StreamResumeCompletedEvent, JSON.stringify(await findCompletedChat()));
-      writeSseEvent(res, 'done', '[DONE]');
+  try {
+    if (!isResponseClosed(res)) {
+      const chat = await findCurrentChat();
+      if (chat.chatGenerateStatus !== ChatGenerateStatusEnum.generating) {
+        await makeSureTheCompletedChatHasBeenRead();
+        writeSseEvent(res, StreamResumeCompletedEvent, JSON.stringify(await findCompletedChat()));
+        writeSseEvent(res, 'done', '[DONE]');
+      }
     }
+  } catch (error) {
+    // SSE 响应已开始写入，异常只能记录日志，不能再向响应写 JSON。
+    logger.warn('Chat resume finalize failed', { chatId, error });
+  } finally {
+    res.end();
   }
-  res.end();
 }
 
 export default NextAPI(handler);

@@ -172,7 +172,7 @@ export async function dispatchWorkFlow({
   const stopController =
     apiVersion === 'v1' ? undefined : await createChatStopController({ ...chatSource, chatId });
   const checkIsStopping = () =>
-    clientAbortTracker?.isClientAborted() ?? stopController?.checkIsStopping() ?? false;
+    clientAbortTracker?.isClientAborted() || stopController?.checkIsStopping() || false;
 
   try {
     /* Init function */

@@ -57,6 +57,8 @@ export const createChatStopController = async (params: WorkflowStatusParams) => 
         stopping = true;
         clearInterval(timer);
       }
+    } catch (error) {
+      logger.warn('Workflow stop signal check failed; continue polling', { ...params, error });
     } finally {
       checking = false;
     }

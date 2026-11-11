@@ -51,8 +51,6 @@ export const createAuxiliaryGenerationStream = async ({
     sourceId,
     chatId
   });
-  const stopMirrorKeepAlive = startStreamResumeMirrorKeepAlive(mirror);
-
   const sseContext = createSseStreamContext({
     res,
     streamResumeMirror: mirror,
@@ -65,6 +63,8 @@ export const createAuxiliaryGenerationStream = async ({
       }
     }
   });
+  // SSE 上下文初始化成功后再启动续期，避免初始化抛错时 interval 无停止路径。
+  const stopMirrorKeepAlive = startStreamResumeMirrorKeepAlive(mirror);
   const write: AuxiliaryGenerationStreamWriter = ({ event, data }) => {
     const payload = typeof data === 'string' ? data : JSON.stringify(data);
     sseContext.write({ event, data: payload });

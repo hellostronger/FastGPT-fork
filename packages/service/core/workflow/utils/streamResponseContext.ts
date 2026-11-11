@@ -139,8 +139,6 @@ export async function createWorkflowStreamResponseContext({
           chatId
         })
       : undefined;
-  const stopMirrorKeepAlive = startStreamResumeMirrorKeepAlive(mirror);
-  res.once('finish', stopMirrorKeepAlive);
 
   const responseWrite = getWorkflowResponseWrite({
     res,
@@ -156,6 +154,10 @@ export async function createWorkflowStreamResponseContext({
     stream,
     responseWrite
   });
+
+  // 所有可能失败的初始化完成后再启动续期，避免初始化抛错时 interval 无停止路径。
+  const stopMirrorKeepAlive = startStreamResumeMirrorKeepAlive(mirror);
+  res.once('finish', stopMirrorKeepAlive);
 
   const context: Omit<WorkflowStreamResponseContext, 'flushResume'> = {
     responseWrite,

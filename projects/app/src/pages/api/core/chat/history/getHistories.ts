@@ -65,7 +65,7 @@ export async function handler(req: ApiRequestProps): Promise<GetHistoriesRespons
   const mergeMatch = { ...match, ...timeMatch, deleteTime: null };
 
   const [data, total] = await Promise.all([
-    await MongoChat.find(mergeMatch, 'chatId title top customTitle appId updateTime hasBeenRead')
+    MongoChat.find(mergeMatch, 'chatId title top customTitle appId updateTime hasBeenRead')
       .sort({ top: -1, updateTime: -1 })
       .skip(offset)
       .limit(pageSize)

@@ -119,7 +119,7 @@ const createRedisStorage = () => {
       const key = keys[0];
       const expectedValue = argv[0];
 
-      if (_script.includes('redis.call("SET", KEYS[1]')) {
+      if (_script.includes('redis.call("SET", KEYS[1], ARGV[1], "PX", ARGV[2], "NX")')) {
         if (!isExpired(key) && storage.has(key)) return [0, storage.get(key)];
         storage.set(key, expectedValue);
         expiryMap.set(key, Date.now() + Number(argv[1]));

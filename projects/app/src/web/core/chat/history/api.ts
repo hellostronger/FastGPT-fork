@@ -24,14 +24,19 @@ export const getChatHistoryStatus = async (
   data: GetHistoryStatusBodyType
 ): Promise<GetHistoryStatusResponseType> => {
   const chatIds = [...new Set(data.chatIds)];
-  const list: GetHistoryStatusResponseType['list'] = [];
+  const batches: string[][] = [];
   for (let offset = 0; offset < chatIds.length; offset += CHAT_GENERATION_STATUS_BATCH_SIZE) {
-    const result = await POST<GetHistoryStatusResponseType>('/core/chat/history/getHistoryStatus', {
-      ...data,
-      chatIds: chatIds.slice(offset, offset + CHAT_GENERATION_STATUS_BATCH_SIZE)
-    });
-    list.push(...result.list);
+    batches.push(chatIds.slice(offset, offset + CHAT_GENERATION_STATUS_BATCH_SIZE));
   }
+  const results = await Promise.all(
+    batches.map((batchChatIds) =>
+      POST<GetHistoryStatusResponseType>('/core/chat/history/getHistoryStatus', {
+        ...data,
+        chatIds: batchChatIds
+      })
+    )
+  );
+  const list: GetHistoryStatusResponseType['list'] = results.flatMap((result) => result.list);
   return { list };
 };
 
