@@ -401,7 +401,9 @@ describe('prepare chat round', () => {
     expect(String(chat?.publishSource?.id)).toBe(testAppId);
     expect(chat?.sourceName).toBe('本次渠道');
 
-    // 1.6.x 的生成锁在上一轮结束后才会释放；交互续跑前先模拟本轮完成。
+    // #8044 之后生成锁在 Redis（SET NX, TTL 60s），不再是 Mongo 的 chatGenerateStatus；
+    // 交互续跑前必须显式释放本轮租约，否则同 chatId 再 preChatRound 会命中 chatIsGenerating。
+    await prepared.releaseGenerationLease?.();
     await MongoChat.updateOne(
       { appId: testAppId, chatId: prepared.chatId },
       { $set: { chatGenerateStatus: ChatGenerateStatusEnum.done } }
