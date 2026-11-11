@@ -1,6 +1,6 @@
 import { createAuxiliaryGenerationStream } from './stream';
 import { createAuxiliaryGenerationUsage } from './usage';
-import { createChatStopController } from '../../chat/stop';
+import { createChatStopController, delAgentRuntimeStopSign } from '../../chat/stop';
 import type { AuxiliaryGenerationRunParams, AuxiliaryGenerationRunResult } from './type';
 
 /**
@@ -37,6 +37,10 @@ export const runAuxiliaryGeneration = async <T>({
   }
 > => {
   const startedAt = Date.now();
+  // 开始前清掉上一轮可能遗留的停止标记：本路径不获取 generationLease，
+  // 没有 tryStartChatGenerationLease 里按快照清理的兜底；留着会让本轮首次
+  // checkIsStopping() 即为 true，整轮空转（stop 标记 TTL 60s）。
+  await delAgentRuntimeStopSign({ sourceType, sourceId, chatId });
   const stopController = await createChatStopController({
     sourceType,
     sourceId,
