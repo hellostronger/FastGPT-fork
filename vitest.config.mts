@@ -4,6 +4,10 @@ import { getTestMaxWorkers } from './test/vitestWorkers';
 
 export default defineConfig({
   resolve: {
+    // 单一 zod 副本：packages/* 依赖工作区内的 zod（.pnpm/zod@4.1.12），而根级测试文件
+    // 会沿目录向上回退到外层仓库的 zod 4.4.3；两份副本会让 zod 的 globalRegistry /
+    // instanceof 失效（.meta() 读不到、交互快照校验按 4.4.3 语义走），表现为并行偶发红。
+    dedupe: ['zod'],
     alias: {
       '@': resolve('projects/app/src'),
       '@fastgpt-sdk/storage/access-link': resolve('sdk/storage/src/access-link/index.ts'),
