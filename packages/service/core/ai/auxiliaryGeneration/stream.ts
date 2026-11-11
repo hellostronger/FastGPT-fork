@@ -5,7 +5,7 @@ import { STREAM_RESUME_REQUEST_HEADER } from '@fastgpt/global/core/chat/constant
 import { getSseErrorResponse } from '../../../common/response';
 import { createSseStreamContext } from '../../../common/response/sse';
 import { clearCookie } from '../../../support/permission/auth/common';
-import { getStreamResumeMirror } from '../../chat/resume';
+import { getStreamResumeMirror, startStreamResumeMirrorKeepAlive } from '../../chat/resume';
 import { createChatCompletionDeltaResponse } from '@fastgpt/global/core/ai/llm/utils';
 
 export type AuxiliaryGenerationStreamWriter = (params: {
@@ -51,7 +51,6 @@ export const createAuxiliaryGenerationStream = async ({
     sourceId,
     chatId
   });
-
   const sseContext = createSseStreamContext({
     res,
     streamResumeMirror: mirror,
@@ -64,7 +63,8 @@ export const createAuxiliaryGenerationStream = async ({
       }
     }
   });
-
+  // SSE 上下文初始化成功后再启动续期，避免初始化抛错时 interval 无停止路径。
+  const stopMirrorKeepAlive = startStreamResumeMirrorKeepAlive(mirror);
   const write: AuxiliaryGenerationStreamWriter = ({ event, data }) => {
     const payload = typeof data === 'string' ? data : JSON.stringify(data);
     sseContext.write({ event, data: payload });
@@ -81,6 +81,7 @@ export const createAuxiliaryGenerationStream = async ({
         event: AuxiliaryGenerationEventEnum.error,
         data
       });
+      stopMirrorKeepAlive();
     },
     writeDone() {
       write({
@@ -94,8 +95,15 @@ export const createAuxiliaryGenerationStream = async ({
         event: AuxiliaryGenerationEventEnum.answer,
         data: '[DONE]'
       });
+      stopMirrorKeepAlive();
     },
-    flushResume: sseContext.flushResume,
-    cleanup: sseContext.cleanup
+    async flushResume() {
+      stopMirrorKeepAlive();
+      await sseContext.flushResume();
+    },
+    cleanup() {
+      stopMirrorKeepAlive();
+      sseContext.cleanup();
+    }
   };
 };

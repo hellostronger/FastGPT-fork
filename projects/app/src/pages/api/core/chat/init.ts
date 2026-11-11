@@ -1,3 +1,4 @@
+import { getChatGenerationStatuses } from '@fastgpt/service/core/chat/generationLease';
 import type { NextApiRequest } from 'next';
 import { NextAPI } from '@/service/middleware/entry';
 import { getAppChatConfig } from '@fastgpt/global/common/app/chat';
@@ -49,10 +50,15 @@ async function handler(req: NextApiRequest): Promise<InitChatResponseType> {
       sourceId: requestedSourceId,
       chatId
     });
-    // 1.6.x 无 generationLease 断点续租实现，保留本仓会话状态口径；
-    // sourceId 取鉴权解析结果（应用 API Key 绑定应用时以绑定为准）。
+    // 1.6.x 保留本仓 sourceId 口径：取鉴权解析结果（应用 API Key 绑定应用时以绑定为准）。
     const { app, skill, chat, teamId, sourceId } = auth;
-    const chatGenerateStatus = chat?.chatGenerateStatus ?? ChatGenerateStatusEnum.done;
+    // #8044：运行状态改由 Redis lease 推导。
+    const generationStatuses = await getChatGenerationStatuses({
+      sourceType,
+      sourceId,
+      chatIds: chatId ? [chatId] : []
+    });
+    const chatGenerateStatus = generationStatuses.get(chatId) ?? ChatGenerateStatusEnum.done;
     if (chat?.hasBeenRead === false && chatGenerateStatus !== ChatGenerateStatusEnum.generating) {
       await MongoChat.updateOne(
         { ...buildChatSourceQuery({ sourceType, sourceId }), ...auth.scope, chatId },
@@ -110,10 +116,7 @@ async function handler(req: NextApiRequest): Promise<InitChatResponseType> {
       title: getDisplayChatTitle({ customTitle: chat?.customTitle, title: chat?.title }),
       userAvatar: undefined,
       variables,
-      // 保持普通 App/Skill 的旧响应；辅助生成在新会话时明确返回默认状态。
-      chatGenerateStatus: isAuxiliaryGenerationSourceType(sourceType)
-        ? chatGenerateStatus
-        : chat?.chatGenerateStatus,
+      chatGenerateStatus,
       hasBeenRead: isAuxiliaryGenerationSourceType(sourceType)
         ? (chat?.hasBeenRead ?? true)
         : chat?.hasBeenRead,

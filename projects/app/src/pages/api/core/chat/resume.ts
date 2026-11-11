@@ -1,3 +1,4 @@
+import { getChatGenerationStatuses } from '@fastgpt/service/core/chat/generationLease';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import {
   ResumeStreamParamsSchema,
@@ -28,7 +29,9 @@ import {
 import { delay } from '@fastgpt/global/common/system/utils';
 import { buildChatSourceQuery } from '@fastgpt/service/core/chat/source';
 import { parseApiInput } from '@fastgpt/service/common/zod/requestParseError';
+import { getLogger, LogCategories } from '@fastgpt/service/common/logger';
 
+const logger = getLogger(LogCategories.MODULE.CHAT.RESUME);
 const completedChatPageSize = 10;
 const resumeUnavailablePollIntervalMs = 3000;
 const resumeUnavailableMaxWaitMs = STREAM_RESUME_TTL_SECONDS * 1000;
@@ -107,14 +110,22 @@ async function handler(req: NextApiRequest, res: NextApiResponse) {
   const findCurrentChat = async (): Promise<CurrentChatState> => {
     const chat = await MongoChat.findOne(
       { chatId, ...buildChatSourceQuery({ sourceType, sourceId: resolvedSourceId }) },
-      { hasBeenRead: 1, chatGenerateStatus: 1 }
+      { hasBeenRead: 1 }
     ).lean();
     if (!chat) {
       return Promise.reject(new Error('Chat not found'));
     }
+    // 恢复沿用默认空闲降级：读取异常可能提前结束当前连接，后台任务仍可继续执行。
+    // Redis 恢复正常且原任务 lease 仍有效时，后续发送会被 chatIsGenerating 拦截；
+    // 启用自动恢复的客户端会保留输入、刷新记录并重新恢复原任务。持续 Redis 故障仍按降级处理。
+    const generationStatuses = await getChatGenerationStatuses({
+      sourceType,
+      sourceId: resolvedSourceId,
+      chatIds: [chatId]
+    });
     return {
       hasBeenRead: chat.hasBeenRead ?? false,
-      chatGenerateStatus: chat.chatGenerateStatus ?? ChatGenerateStatusEnum.done
+      chatGenerateStatus: generationStatuses.get(chatId) ?? ChatGenerateStatusEnum.done
     };
   };
 
@@ -243,7 +254,22 @@ async function handler(req: NextApiRequest, res: NextApiResponse) {
   writeResumePhase(res, StreamResumePhaseEnum.live);
   await _resume({ res, teamId, sourceType, sourceId: resolvedSourceId, chatId, cursor });
 
-  res.end();
+  // 进程退出不会再写 done 事件；阻塞读取发现 lease 失效后，补齐持久化记录并结束恢复。
+  try {
+    if (!isResponseClosed(res)) {
+      const chat = await findCurrentChat();
+      if (chat.chatGenerateStatus !== ChatGenerateStatusEnum.generating) {
+        await makeSureTheCompletedChatHasBeenRead();
+        writeSseEvent(res, StreamResumeCompletedEvent, JSON.stringify(await findCompletedChat()));
+        writeSseEvent(res, 'done', '[DONE]');
+      }
+    }
+  } catch (error) {
+    // SSE 响应已开始写入，异常只能记录日志，不能再向响应写 JSON。
+    logger.warn('Chat resume finalize failed', { chatId, error });
+  } finally {
+    res.end();
+  }
 }
 
 export default NextAPI(handler);

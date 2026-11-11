@@ -6,8 +6,7 @@ import { markProfileError } from '@fastgpt/service/common/profiling';
 import {
   ChatRoleEnum,
   ChatSourceEnum,
-  ChatSourceTypeEnum,
-  ChatGenerateStatusEnum
+  ChatSourceTypeEnum
 } from '@fastgpt/global/core/chat/constants';
 import { SseResponseEventEnum } from '@fastgpt/global/core/workflow/runtime/constants';
 import { dispatchWorkFlow } from '@fastgpt/service/core/workflow/dispatch';
@@ -75,7 +74,6 @@ import { LimitTypeEnum, teamFrequencyLimit } from '@fastgpt/service/common/api/f
 import { getIpFromRequest } from '@fastgpt/service/common/geo';
 import { pushTrack } from '@fastgpt/service/common/middle/tracks/utils';
 import { parseApiInput } from '@fastgpt/service/common/zod/requestParseError';
-import { updateChatGenerateStatus } from '@fastgpt/service/core/chat/chatGenerateStatus';
 
 import {
   filterWorkflowFinalResponseData,
@@ -461,14 +459,6 @@ async function handler(req: NextApiRequest, res: NextApiResponse) {
     } else if (preparedRound.shouldFinalizePreparedRound) {
       await finalizeChatRound(params);
     }
-
-    if (!preparedRound.shouldFinalizePreparedRound && preparedRound.shouldPersistChatRound) {
-      await updateChatGenerateStatus({
-        ...chatSource,
-        chatId: saveChatId,
-        status: ChatGenerateStatusEnum.done
-      });
-    }
     const isOwnerUse = !shareId;
     if (isOwnerUse && source === ChatSourceEnum.online) {
       await recordAppUsage({
@@ -582,13 +572,6 @@ async function handler(req: NextApiRequest, res: NextApiResponse) {
           responseChatItemId: roundState.responseChatItemId,
           error: err
         });
-      } else {
-        await updateChatGenerateStatus({
-          sourceType: ChatSourceTypeEnum.app,
-          sourceId: roundState.sourceId,
-          chatId: roundState.chatId,
-          status: ChatGenerateStatusEnum.error
-        });
       }
     }
     if (stream) {
@@ -605,8 +588,12 @@ async function handler(req: NextApiRequest, res: NextApiResponse) {
       });
     }
   } finally {
-    if (stream) {
-      res.end();
+    try {
+      if (stream) {
+        res.end();
+      }
+    } finally {
+      await roundState.preparedRound?.releaseGenerationLease?.();
     }
   }
 }
