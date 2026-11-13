@@ -223,6 +223,15 @@ export const CreateAppBodySchema = z
       example: '68ad85a7463006c963799a05',
       description: '父级应用/文件夹 ID'
     }),
+    // 回移上游 #8321：创建应用可显式指定是否继承父级权限。
+    // 1.6 线未引入 support/permission/inheritPermission 共享 schema，这里用等价的
+    // BoolSchema.optional()（语义与 core/dataset/type.ts 的 InheritPermissionSchema 一致）：
+    // 省略时由 service 层按 true 处理，保持既有行为不变。
+    inheritPermission: BoolSchema.optional().meta({
+      example: true,
+      description:
+        '是否继承父级权限（默认 true），仅对文件夹（type=folder）生效：true = 继承父级权限；false = 独立创建，仅写创建者 owner 权限快照'
+    }),
     name: z.string().min(1).meta({
       example: '新应用',
       description: '应用名称'
