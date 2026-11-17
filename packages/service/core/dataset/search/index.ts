@@ -37,11 +37,34 @@ export const defaultSearchDatasetData = async ({
         aiExtensionResult: undefined
       };
 
+  const textQueries = props.textQueries.map((query) => query.trim()).filter(Boolean);
+  const query = textQueries.join('\n');
+
+  const { searchQueries, reRankQuery, aiExtensionResult } = query
+    ? await datasetSearchQueryExtension({
+        query,
+        llmModel: datasetSearchUsingExtensionQuery ? datasetSearchExtensionModel : undefined,
+        embeddingModel: props.model,
+        extensionBg: datasetSearchExtensionBg,
+        histories: props.histories,
+        datasetIds: props.datasetIds,
+        userKey,
+        teamId: props.teamId
+      })
+    : {
+        searchQueries: [],
+        reRankQuery: query,
+        aiExtensionResult: undefined
+      };
+
   const result = await searchDatasetData({
     ...props,
     userKey,
     reRankQuery,
-    textQueries: searchQueries
+    textQueries: searchQueries,
+    // S2：同义词装饰只扫「用户原始问题」（props.textQueries 是扩展前的输入），
+    // 扩展模型生成的同义词与装饰语义（原词出现在分块或用户问题中）无关。
+    rawQueries: [...(props.rawQueries ?? []), ...textQueries]
   });
 
   return {

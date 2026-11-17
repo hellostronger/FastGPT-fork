@@ -190,12 +190,13 @@ export async function searchDatasetData(
   const filterMaxTokensResult = await filterDatasetDataByMaxTokens(scoreFilter, maxTokens);
   // 同义词只装饰最终入选结果：被前面过滤掉的候选不会产生 alias 查询。
   // queries 用于补充「问题里的原词 → 标准词」映射（分块正文只写标准词时模型仍能做术语对齐）；
-  // rawQueries 是用户原始问题——Agent 链路的检索词可能已被 LLM 改写成标准词，别名只剩这里。
+  // rawQueries 只含用户原始问题（search/index.ts 已把扩展前的输入并入）——扩展模型
+  // 生成的同义词不属于「原词出现在分块或用户问题中」的装饰语义，不参与装饰。
   const decoratedFinal = await attachSynonymMappingsToSearchResults({
     teamId,
     datasetIds,
     results: filterMaxTokensResult,
-    queries: [...textQueries, ...rawQueries]
+    queries: rawQueries
   });
   // Step 8: 返回前一次收集最终结果中的 q、a、imageId，并批量签发唯一 dataset 对象 key。
   // 最终输出不暴露仅供格式化使用的 imageId。

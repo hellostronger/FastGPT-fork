@@ -36,7 +36,14 @@ export const createWorkflowAgentToolProvider = ({
   // 用户原始问题（文本部分）。Agent 生成的检索词往往已把别名改写成标准词
   // （例：问题「枕瓜排骨汤」→ 检索词「冬瓜排骨汤的做法」），同义词映射装饰需要
   // 原始问题才能把「问题原词 → 标准词」对齐到命中分块。
-  const userRawQuery = getChatItemTextContent(context.query);
+  // S1：query 为 select/恢复等结构时文本为空，此时回退 params.userChatInput
+  // （workflowStart 保存的原问题仍在节点参数里）。
+  const userRawQuery = [
+    getChatItemTextContent(context.query),
+    typeof context.params.userChatInput === 'string' ? context.params.userChatInput : ''
+  ]
+    .filter(Boolean)
+    .join('\n');
   const datasetSearchExecutor: AgentLoopDatasetSearchExecutor | undefined = datasetParams?.datasets
     ?.length
     ? async ({ call }) => {
