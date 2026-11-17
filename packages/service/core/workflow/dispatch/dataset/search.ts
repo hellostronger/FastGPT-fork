@@ -85,6 +85,7 @@ export const dispatchDatasetSearch = async (
     runningUserInfo,
     externalProvider,
     histories,
+    query: originQuery,
     node,
     params: {
       datasets = [],
@@ -209,6 +210,21 @@ export const dispatchDatasetSearch = async (
       tmbId,
       textQueries,
       imageQueries,
+      // 用户原始问题只参与同义词映射装饰（不参与召回/重排）：Agent 工具链路可能把检索词
+      // 改写成标准词（例：问题「枕瓜排骨汤」→ 检索词「冬瓜排骨汤的做法」），别名不在
+      // textQueries 里；装饰层需要原始问题才能把「问题原词 → 标准词」对齐到命中分块。
+      rawQueries: [
+        ...(userChatInput ? [userChatInput] : []),
+        ...(() => {
+          const text = Array.isArray(originQuery)
+            ? originQuery
+                .map((item) => item.text?.content)
+                .filter((content): content is string => Boolean(content))
+                .join('\n')
+            : '';
+          return text ? [text] : [];
+        })()
+      ],
       model: vectorModel,
       vlmModel,
       similarity,
