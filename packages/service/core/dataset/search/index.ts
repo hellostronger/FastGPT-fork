@@ -37,26 +37,6 @@ export const defaultSearchDatasetData = async ({
         aiExtensionResult: undefined
       };
 
-  const textQueries = props.textQueries.map((query) => query.trim()).filter(Boolean);
-  const query = textQueries.join('\n');
-
-  const { searchQueries, reRankQuery, aiExtensionResult } = query
-    ? await datasetSearchQueryExtension({
-        query,
-        llmModel: datasetSearchUsingExtensionQuery ? datasetSearchExtensionModel : undefined,
-        embeddingModel: props.model,
-        extensionBg: datasetSearchExtensionBg,
-        histories: props.histories,
-        datasetIds: props.datasetIds,
-        userKey,
-        teamId: props.teamId
-      })
-    : {
-        searchQueries: [],
-        reRankQuery: query,
-        aiExtensionResult: undefined
-      };
-
   const result = await searchDatasetData({
     ...props,
     userKey,
