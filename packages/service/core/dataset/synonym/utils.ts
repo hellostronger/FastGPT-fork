@@ -11,7 +11,7 @@ import * as XLSX from 'xlsx';
 const supportedExtensions = new Set(['csv', 'xls', 'xlsx']);
 const standardizedTermHeaders = new Set(['标准词', '标准术语', 'standard', 'standardizedterm']);
 const synonymHeaderReg = /^(同义词\d*|synonym(?:terms?)?\d*)$/i;
-const controlCharacterReg = /[\-\\]/u;
+const controlCharacterReg = /[\x00-\x1f\x7f]/u;
 const latinNumberOrUnderscoreReg = /[\p{Script=Latin}\p{N}_]/u;
 
 export type ParsedSynonymRow = {
@@ -397,10 +397,7 @@ export const serializeSynonymMappingsToExcelBuffer = (
   }
 
   const aoa: (string | number)[][] = [
-    [
-      '标准术语',
-      ...Array.from({ length: maxSynonymCount }, () => '同义词')
-    ],
+    ['标准术语', ...Array.from({ length: maxSynonymCount }, () => '同义词')],
     ...dataRows
   ];
   const worksheet = XLSX.utils.aoa_to_sheet(aoa);
