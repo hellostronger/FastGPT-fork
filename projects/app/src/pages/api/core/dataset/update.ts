@@ -209,9 +209,9 @@ async function handler(req: ApiRequestProps<UpdateDatasetBody>) {
         }
       )
     ) {
-      // web 站点改分块大小 = 数据重建而非删除知识库：同义词配置与当前版本映射
-      // 原地保留（TD #2026111600233——此前快照删插会跨租户全表扫描、无分批写入，
-      // 且阻碍差量重建的历史映射回收）。真实删除知识库的路径不受影响。
+      // web 站点改分块大小 = 数据重建而非删除知识库：传 keepSynonyms 让
+      // delDatasetRelevantData 跳过同义词配置与映射的删除（配置与当前版本映射
+      // 原地保留，历史残留映射由清理器按版本条件回收）。真实删除知识库路径不变。
       await delDatasetRelevantData({ datasets: [dataset], session }, { keepSynonyms: true });
     }
 
