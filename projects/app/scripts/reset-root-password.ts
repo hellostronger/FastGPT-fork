@@ -12,7 +12,8 @@ export const resetRootPassword = async (password: string) => {
   if (!password) throw new Error('root 密码不能为空');
 
   // mongodb 是 service workspace 的传递依赖；类型检查在 app workspace 中无法解析，但 esbuild 会内联该动态导入。
-  // @ts-expect-error The app workspace consumes mongodb through @fastgpt/service.
+  // 用 @ts-ignore 而非 @ts-expect-error：依赖被提升后导入可解析，未使用的 expect-error 会直接报错。
+  // @ts-ignore The app workspace consumes mongodb through @fastgpt/service.
   const { MongoClient } = await import('mongodb');
   const client = new MongoClient(uri);
   try {
