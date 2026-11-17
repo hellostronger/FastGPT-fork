@@ -72,6 +72,15 @@ const nextConfig: NextConfig = {
     }
   },
   transpilePackages: ['@modelcontextprotocol/sdk', 'ahooks'],
+  // 验证环境专用：pnpm workspace 把 @node-rs/jieba 解析到 FastGPT/node_modules，
+  // webpack 不认 serverExternalPackages，会把原生 .node 当 JS 打包导致构建失败。
+  webpack: (config, { isServer }) => {
+    if (isServer) {
+      config.externals = Array.isArray(config.externals) ? config.externals : [config.externals];
+      config.externals.push({ '@node-rs/jieba': 'commonjs @node-rs/jieba' });
+    }
+    return config;
+  },
   serverExternalPackages: [
     '@node-rs/jieba',
     'bullmq',
