@@ -1,6 +1,7 @@
 import { createWorkflowToolInteractive } from '../../agentLoopCore/adapter/interactive/child';
 import { FlowNodeTypeEnum } from '@fastgpt/global/core/workflow/node/constant';
 import { SubAppIds } from '@fastgpt/global/core/workflow/node/agent/constants';
+import { getChatItemTextContent } from '@fastgpt/global/core/chat/utils';
 import type { AgentLoopDatasetSearchExecutor } from '../../../../../ai/llm/agentLoop/interface';
 import type { AgentLoopCoreToolRunResult } from '../../agentLoopCore/interface';
 import {
@@ -35,12 +36,7 @@ export const createWorkflowAgentToolProvider = ({
   // 用户原始问题（文本部分）。Agent 生成的检索词往往已把别名改写成标准词
   // （例：问题「枕瓜排骨汤」→ 检索词「冬瓜排骨汤的做法」），同义词映射装饰需要
   // 原始问题才能把「问题原词 → 标准词」对齐到命中分块。
-  const userRawQuery = Array.isArray(context.query)
-    ? context.query
-        .map((item) => item.text?.content)
-        .filter((content): content is string => Boolean(content))
-        .join('\n')
-    : undefined;
+  const userRawQuery = getChatItemTextContent(context.query);
   const datasetSearchExecutor: AgentLoopDatasetSearchExecutor | undefined = datasetParams?.datasets
     ?.length
     ? async ({ call }) => {

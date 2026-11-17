@@ -1,6 +1,7 @@
 import { DatasetErrEnum } from '@fastgpt/global/common/error/code/dataset';
 import { i18nT } from '@fastgpt/global/common/i18n/utils';
 import type { ChatHistoryItemResType } from '@fastgpt/global/core/chat/type';
+import { getChatItemTextContent } from '@fastgpt/global/core/chat/utils';
 import { DatasetSearchModeEnum } from '@fastgpt/global/core/dataset/constants';
 import type { SearchDataResponseItemType } from '@fastgpt/global/core/dataset/type';
 import type { NodeOutputKeyEnum, NodeInputKeyEnum } from '@fastgpt/global/core/workflow/constants';
@@ -216,12 +217,7 @@ export const dispatchDatasetSearch = async (
       rawQueries: [
         ...(userChatInput ? [userChatInput] : []),
         ...(() => {
-          const text = Array.isArray(originQuery)
-            ? originQuery
-                .map((item) => item.text?.content)
-                .filter((content): content is string => Boolean(content))
-                .join('\n')
-            : '';
+          const text = getChatItemTextContent(originQuery);
           return text ? [text] : [];
         })()
       ],
