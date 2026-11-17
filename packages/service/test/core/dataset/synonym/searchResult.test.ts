@@ -325,4 +325,49 @@ describe('synonym search result enrichment', () => {
     });
     expect(standardOnly[0].synonymMappings).toEqual({ ALIAS: 'standard-1', alias: 'standard-1' });
   });
+
+  /**
+   * F2 边界（2026-11-17 Codex review）：问题侧反向匹配的标准词命中必须复用
+   * matcher 的归一化与词边界语义，不能用 includes——否则英文大小写变体漏配
+   * （「REFUND」vs「Refund」），词中子串误配（cat ⊂ concatenate）。
+   * 测试用 standard-1 作为标准词、alias 作为别名的既有 mock matcher。
+   */
+  it('matches the standard term with matcher normalization and word boundaries', async () => {
+    // 大小写变体：正文写 STANDARD-1（大写），matcher 归一化后应命中
+    const caseVariant = await attachSynonymMappingsToSearchResults({
+      teamId,
+      datasetIds: [datasetId],
+      results: [item('STANDARD-1 policies')],
+      queries: ['alias question']
+    });
+    expect(caseVariant[0].synonymMappings).toEqual({ alias: 'standard-1' });
+
+    // 词中子串：正文 standard-10 里包含 standard-1 前缀，但边界不合法（后随数字）
+    // → 不得注入映射
+    const prefixInsideWord = await attachSynonymMappingsToSearchResults({
+      teamId,
+      datasetIds: [datasetId],
+      results: [item('standard-10 policies')],
+      queries: ['alias question']
+    });
+    expect(prefixInsideWord[0].synonymMappings).toEqual({});
+
+    // 连字符本身是边界的一部分：standard-1x 也不算命中
+    const letterSuffix = await attachSynonymMappingsToSearchResults({
+      teamId,
+      datasetIds: [datasetId],
+      results: [item('standard-1x policies')],
+      queries: ['alias question']
+    });
+    expect(letterSuffix[0].synonymMappings).toEqual({});
+
+    // 完整独立词：正常命中
+    const standalone = await attachSynonymMappingsToSearchResults({
+      teamId,
+      datasetIds: [datasetId],
+      results: [item('the standard-1 reference')],
+      queries: ['alias question']
+    });
+    expect(standalone[0].synonymMappings).toEqual({ alias: 'standard-1' });
+  });
 });

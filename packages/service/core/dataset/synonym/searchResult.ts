@@ -2,7 +2,14 @@ import type { SearchDataResponseItemType } from '@fastgpt/global/core/dataset/ty
 import { MongoDatasetData } from '../data/schema';
 import { formatDatasetDataTextValue } from '../data/controller';
 import { getCachedDatasetSynonymConfig, getDatasetSynonymMatcher } from './entity';
-import type { DatasetSynonymMatcher } from './utils';
+import { buildSynonymMatcher, normalizeSynonymTerm, type DatasetSynonymMatcher } from './utils';
+
+/**
+ * 问题侧反向匹配的探针哨兵：把「标准词」插成同义词侧、标准词本身用哨兵占位，
+ * 从而复用 matcher 的归一化与词边界语义判定标准词是否出现在正文里。
+ * 哨兵字符不可能出现在正文中，避免与 no-op 标准词端子同节点互相遮蔽。
+ */
+const SYNONYM_TERM_PROBE_SENTINEL = '\u0000';
 import { getLogger, LogCategories } from '../../../common/logger';
 import { serviceEnv } from '../../../env';
 
@@ -102,6 +109,8 @@ export const attachSynonymMappingsToSearchResults = async ({
     string,
     ReturnType<DatasetSynonymMatcher['transform']>['usedMappings']
   >();
+  // 单标准词条 matcher 缓存（问题侧反向匹配的词边界判定用）
+  const termMatchers = new Map<string, DatasetSynonymMatcher>();
   const queryText = queries
     .map((query) => query.trim())
     .filter(Boolean)
@@ -164,9 +173,31 @@ export const attachSynonymMappingsToSearchResults = async ({
             matcher.transform(queryText, { preserveMatchedTermCase: true }).usedMappings
           );
         }
-        const queryMappings = (queryMappingsByMatcher.get(matcherKey) ?? []).filter((mapping) =>
-          chunkText.includes(mapping.standardizedTerm)
-        );
+        // 标准词在正文中的命中判断必须复用 matcher 的归一化与词边界语义，不能用
+        // includes：大小写变体（「REFUND」vs「Refund」）会漏配，词中子串
+        // （cat ⊂ concatenate）会误配。用「把标准词当作同义词侧」的单词条 matcher
+        // 做命中判定，天然继承上述约定；按 matcher 版本+标准词缓存，避免重复建 trie。
+        const queryMappings = (queryMappingsByMatcher.get(matcherKey) ?? []).filter((mapping) => {
+          const termMatcherKey = `${matcherKey}:${mapping.standardizedTerm}`;
+          let termMatcher = termMatchers.get(termMatcherKey);
+          if (!termMatcher) {
+            termMatcher = buildSynonymMatcher([
+              {
+                logicalMappingId: mapping.mappingId,
+                datasetId: mapping.datasetId,
+                fileVersion: mapping.fileVersion,
+                // 标准词用哨兵占位：若把标准词同时插成同义词侧，它会与 no-op 的
+                // 标准词端子落在同一 trie 节点、被先命中的 no-op 端子遮蔽（产出 0 命中）。
+                standardizedTerm: SYNONYM_TERM_PROBE_SENTINEL,
+                normalizedStandardizedTerm: SYNONYM_TERM_PROBE_SENTINEL,
+                synonymTerms: [mapping.standardizedTerm],
+                normalizedSynonymTerms: [normalizeSynonymTerm(mapping.standardizedTerm)]
+              }
+            ]);
+            termMatchers.set(termMatcherKey, termMatcher);
+          }
+          return termMatcher.transform(chunkText).usedMappings.length > 0;
+        });
 
         const mappings: Record<string, string> = Object.create(null);
 
