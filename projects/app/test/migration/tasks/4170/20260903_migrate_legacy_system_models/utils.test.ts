@@ -3,6 +3,7 @@ import { ModelScopeEnum, ModelTypeEnum } from '@fastgpt/global/core/ai/constants
 import type { AIModelDocumentDataType } from '@fastgpt/global/core/ai/model/schema';
 import {
   getLegacyDefaultModelFlags,
+  isLegacyTeamModel,
   repairSystemModelDocument
 } from '@/migration/tasks/4170/20260903_migrate_legacy_system_models/utils';
 
@@ -230,6 +231,31 @@ describe('repairSystemModelDocument', () => {
         record: { model: '', provider: null, type: 'unknown', metadata: {} }
       })
     ).toMatchObject({ status: 'invalid' });
+  });
+});
+
+describe('isLegacyTeamModel', () => {
+  it('treats a custom model without isShared as a private team model', () => {
+    expect(isLegacyTeamModel({ model: 'private-llm', isCustom: true })).toBe(true);
+  });
+
+  it('never treats preset models as team models even when isShared is false', () => {
+    expect(
+      isLegacyTeamModel({ model: 'gpt-4o', isCustom: false, isShared: false })
+    ).toBe(false);
+  });
+
+  it('derives custom models from the plugin list when isCustom is missing', () => {
+    const isPreset = (model: string) => model === 'gpt-4o';
+
+    expect(isLegacyTeamModel({ model: 'private-llm', isShared: false }, isPreset)).toBe(true);
+    expect(isLegacyTeamModel({ model: 'gpt-4o', isShared: false }, isPreset)).toBe(false);
+  });
+
+  it('keeps shared custom models in system scope', () => {
+    expect(
+      isLegacyTeamModel({ model: 'shared-llm', isCustom: true, isShared: true })
+    ).toBe(false);
   });
 });
 

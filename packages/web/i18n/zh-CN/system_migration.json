@@ -152,5 +152,17 @@
   "migrations.20261104_backfill_openapi_key_type.description": "后台独立回填个人密钥与应用 Key 类型，保留原绑定、凭证及所有旧字段。",
   "migrations.20261104_backfill_openapi_key_type.result": "已扫描 {{keys}} 个密钥",
   "migrations.20261104_backfill_openapi_key_type.keys": "密钥类型",
-  "migrations.20261104_backfill_openapi_key_type.validation": "校验回填结果"
+  "migrations.20261104_backfill_openapi_key_type.validation": "校验回填结果",
+  "migrations.20261116_migrate_legacy_dataset.name": "升级历史知识库数据",
+  "migrations.20261116_migrate_legacy_dataset.description": "删除 1.6.0 已移除的 database/structureDocument 知识库，并迁移文档解析开关、同义词结构及数据标记。",
+  "migrations.20261116_migrate_legacy_dataset.legacyDatasets": "删除已移除类型的知识库",
+  "migrations.20261116_migrate_legacy_dataset.datasetFields": "迁移文档解析开关",
+  "migrations.20261116_migrate_legacy_dataset.synonyms": "迁移同义词结构",
+  "migrations.20261116_migrate_legacy_dataset.synonymData": "迁移同义词数据标记",
+  "migrations.20261116_migrate_legacy_dataset.result": "删除 {{legacyDeleted}} 个知识库，跳过 {{legacySkipped}} 个；更新 {{datasetsUpdated}} 个知识库配置；迁移 {{synonymsMigrated}} 个同义词配置，停用 {{synonymsDisabled}} 个；回填 {{synonymDataVersioned}} 条数据同义词版本，清理 {{synonymDataCleaned}} 条历史标记。",
+  "migrations.20261117_migrate_legacy_collection_tags.name": "迁移旧版知识库标签定义",
+  "migrations.20261117_migrate_legacy_collection_tags.description": "把旧版标签定义按原 ID 复制到新版标签表，使历史集合标签继续生效；同名定义会合并并修正引用。",
+  "migrations.20261117_migrate_legacy_collection_tags.definitions": "复制标签定义",
+  "migrations.20261117_migrate_legacy_collection_tags.validation": "校验标签引用",
+  "migrations.20261117_migrate_legacy_collection_tags.result": "复制 {{definitionsCopied}} 个标签定义，合并 {{remappedDefinitions}} 个同名定义并修正 {{collectionRefsUpdated}} 个集合引用；{{danglingReferences}} 个历史引用仍缺少定义。"
 }

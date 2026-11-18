@@ -164,6 +164,64 @@ const getIssues = (record: unknown) => {
       }));
 };
 
+/**
+ * 判断 150 记录是否为「私有模型」。
+ *
+ * - `isCustom === false` 一定是预置模型，即使 `isShared` 为 false 也不属于私有模型；
+ * - `isCustom` 缺失只出现在 4.15 之前的库：当时只有用户自建模型会落库，因此用插件模板反推
+ *   （与 initv4150 的回填规则一致）；
+ * - 150 中 `isShared` 缺省即 falsy（私有），只有显式 `true` 才是公开模型，缺失不能当公开。
+ *
+ * 迁移后这些模型仍写入 system scope，由 ACL 维持 150 的可见范围。
+ */
+export const isLegacyTeamModel = (
+  record: unknown,
+  isPresetModel: (model: string) => boolean = () => false
+): boolean => {
+  const raw = toRecord(record);
+  if (!raw) return false;
+  const model = toTrimmedString(raw.model) ?? '';
+  const isCustom =
+    raw.isCustom === true ||
+    (raw.isCustom === undefined && model !== '' && !isPresetModel(model));
+  return isCustom && raw.isShared !== true;
+};
+
+/** 读取 150 记录的创建人/团队归属，用于识别 root 创建的模型。 */
+export const getLegacyOwnerIds = (
+  record: unknown
+): { tmbId?: string; teamId?: string } => {
+  const raw = toRecord(record);
+  const toId = (value: unknown) => {
+    if (value === undefined || value === null || value === '') return undefined;
+    const text = String(value);
+    return text === '[object Object]' ? undefined : text;
+  };
+  return {
+    tmbId: toId(raw?.tmbId),
+    teamId: toId(raw?.teamId)
+  };
+};
+
+/** 读取 150 记录的自包含请求地址/鉴权；预置模型通常为空，依赖 AI Proxy 渠道。 */
+export const getLegacyRequestCredentials = (
+  record: unknown
+): { requestUrl?: string; requestAuth?: string } => {
+  const raw = toRecord(record);
+  if (!raw) return {};
+  const sources = getDocumentSources(raw);
+  const read = (key: 'requestUrl' | 'requestAuth') => {
+    for (const source of sources) {
+      const value = toTrimmedString(source[key]);
+      if (value !== undefined) return value;
+    }
+  };
+  return {
+    requestUrl: read('requestUrl'),
+    requestAuth: read('requestAuth')
+  };
+};
+
 export type RepairSystemModelResult =
   | {
       status: 'unchanged' | 'repaired';
@@ -178,20 +236,35 @@ export type RepairSystemModelResult =
 /**
  * 按单个模型修复新旧结构。合法 canonical 文档不会被旧 metadata 覆盖；非法可选字段会被
  * 丢弃，必填配置使用插件模板或类型默认值补齐。无法恢复模型身份时返回 invalid。
+ * scope 默认 system；团队模型需同时传入 tmbId/teamId。
  */
 export const repairSystemModelDocument = ({
   record,
-  pluginDocument
+  pluginDocument,
+  scope = ModelScopeEnum.system,
+  tmbId,
+  teamId
 }: {
   record: unknown;
   pluginDocument?: AIModelDocumentDataType;
+  scope?: ModelScopeEnum;
+  tmbId?: string;
+  teamId?: string;
 }): RepairSystemModelResult => {
   const raw = toRecord(record);
   const canonical = LegacyAIModelDocumentSchema.safeParse(record);
   // scope 在领域 Schema 中有默认值，便于新建系统模型；但迁移判定必须检查真实持久化字段。
   // 否则仅有旧 isSystem 的 canonical 文档会被默认成 system，并错误地跳过 scope 写回。
-  if (canonical.success && raw?.scope === ModelScopeEnum.system) {
-    return { status: 'unchanged', document: canonical.data, issues: [] };
+  if (canonical.success && raw?.scope === scope) {
+    if (scope === ModelScopeEnum.system) {
+      return { status: 'unchanged', document: canonical.data, issues: [] };
+    }
+    if (
+      String(raw?.tmbId ?? '') === String(tmbId ?? '') &&
+      String(raw?.teamId ?? '') === String(teamId ?? '')
+    ) {
+      return { status: 'unchanged', document: canonical.data, issues: [] };
+    }
   }
 
   if (!raw) return { status: 'invalid', issues: getIssues(record) };
@@ -300,9 +373,13 @@ export const repairSystemModelDocument = ({
     provider,
     model,
     name,
-    scope: ModelScopeEnum.system,
+    scope,
     config
   };
+  if (scope === ModelScopeEnum.team) {
+    if (tmbId) document.tmbId = tmbId;
+    if (teamId) document.teamId = teamId;
+  }
   baseBooleanKeys.forEach((key) => {
     const value = readBoolean(key);
     if (value !== undefined) document[key] = value;

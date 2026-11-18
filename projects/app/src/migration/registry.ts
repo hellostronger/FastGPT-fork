@@ -28,6 +28,8 @@ import { migrateChunkTraining } from './tasks/4171/20261008_migrate_chunk_traini
 import { backfillAgentSandboxTeamId } from './tasks/4173/20261009_backfill_agent_sandbox_team_id';
 import { migrateTokenPricesPerMillion } from './tasks/4173/20261025_token_prices_per_million';
 import { initializeDatasetVectorIndexes } from './tasks/4180/20261022_initialize_dataset_vector_indexes';
+import { migrateLegacyDataset } from './tasks/4180/20261116_migrate_legacy_dataset';
+import { migrateLegacyCollectionTags } from './tasks/4180/20261117_migrate_legacy_collection_tags';
 
 export type SystemMigrationLogger = {
   info: (message: string, metadata?: Record<string, unknown>) => void;
@@ -176,6 +178,41 @@ export const systemMigrations = [
       }
     ],
     run: backfillModelPermissionReferences
+  },
+  {
+    id: '20261116_migrate_legacy_dataset',
+    blockStartup: true,
+    // 必须先删除 1.6.0 已移除类型的知识库，避免后续引用回填/向量索引处理无效数据。
+    dependsOn: ['20260903_migrate_legacy_system_models'],
+    version: '4.18.0',
+    nameKey: i18nT('system_migration:migrations.20261116_migrate_legacy_dataset.name'),
+    descriptionKey: i18nT(
+      'system_migration:migrations.20261116_migrate_legacy_dataset.description'
+    ),
+    resultKey: i18nT('system_migration:migrations.20261116_migrate_legacy_dataset.result'),
+    progressSteps: [
+      {
+        key: 'legacyDatasets',
+        labelKey: i18nT(
+          'system_migration:migrations.20261116_migrate_legacy_dataset.legacyDatasets'
+        )
+      },
+      {
+        key: 'datasetFields',
+        labelKey: i18nT(
+          'system_migration:migrations.20261116_migrate_legacy_dataset.datasetFields'
+        )
+      },
+      {
+        key: 'synonyms',
+        labelKey: i18nT('system_migration:migrations.20261116_migrate_legacy_dataset.synonyms')
+      },
+      {
+        key: 'synonymData',
+        labelKey: i18nT('system_migration:migrations.20261116_migrate_legacy_dataset.synonymData')
+      }
+    ],
+    run: migrateLegacyDataset
   },
   {
     id: '20260903_backfill_dataset_model_references',
@@ -655,6 +692,32 @@ export const systemMigrations = [
       }
     ],
     run: backfillOpenApiKeyType
+  },
+  {
+    id: '20261117_migrate_legacy_collection_tags',
+    // 等 v2 标签整理与无效知识库删除完成后再按原 _id 复制定义。
+    dependsOn: ['20260907_migrate_dataset_tags_v2', '20261116_migrate_legacy_dataset'],
+    version: '4.18.0',
+    nameKey: i18nT('system_migration:migrations.20261117_migrate_legacy_collection_tags.name'),
+    descriptionKey: i18nT(
+      'system_migration:migrations.20261117_migrate_legacy_collection_tags.description'
+    ),
+    resultKey: i18nT('system_migration:migrations.20261117_migrate_legacy_collection_tags.result'),
+    progressSteps: [
+      {
+        key: 'definitions',
+        labelKey: i18nT(
+          'system_migration:migrations.20261117_migrate_legacy_collection_tags.definitions'
+        )
+      },
+      {
+        key: 'validation',
+        labelKey: i18nT(
+          'system_migration:migrations.20261117_migrate_legacy_collection_tags.validation'
+        )
+      }
+    ],
+    run: migrateLegacyCollectionTags
   }
 ] as const satisfies readonly SystemMigration[];
 

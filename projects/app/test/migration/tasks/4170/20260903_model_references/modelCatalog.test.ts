@@ -104,7 +104,8 @@ describe('loadModelCatalog', () => {
 
     await MongoAIModelCatalog.deleteMany({});
     const fallbackCatalog = await loadModelCatalog();
-    expect(fallbackCatalog.resolveFallbackModelId(llmRequirement)).toBe(String(ids[0]));
+    // ids[0] 已停用：兜底只接受启用模型，回落到 ids[1]
+    expect(fallbackCatalog.resolveFallbackModelId(llmRequirement)).toBe(String(ids[1]));
     expect(fallbackCatalog.resolveFallbackModelId(visionRequirement)).toBe(String(ids[1]));
   });
 

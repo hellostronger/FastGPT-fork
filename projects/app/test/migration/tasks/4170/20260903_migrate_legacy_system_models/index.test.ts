@@ -48,7 +48,18 @@ describe('migrateLegacySystemModels', () => {
       status: 'migrated',
       sourceCount: 3,
       targetCount: 5,
-      migratedCount: 2
+      migratedCount: 2,
+      systemCount: 2,
+      teamCount: 0,
+      removedCount: 0,
+      aclRemovedCount: 0,
+      invalidCount: 0,
+      skippedCount: 0,
+      clearedDefaultSlots: [],
+      removedModels: [],
+      channelCheck: 'ok',
+      referenceCheck: 'ok',
+      warnings: []
     });
   });
 
@@ -58,7 +69,17 @@ describe('migrateLegacySystemModels', () => {
     await expect(migrateLegacySystemModels(context)).resolves.toEqual({
       sourceCount: 3,
       targetCount: 5,
-      migratedCount: 2
+      migratedCount: 2,
+      systemCount: 2,
+      teamCount: 0,
+      removedCount: 0,
+      aclRemovedCount: 0,
+      invalidCount: 0,
+      skippedCount: 0,
+      clearedDefaultSlotCount: 0,
+      channelCheck: 'ok',
+      referenceCheck: 'ok',
+      warningCount: 0
     });
 
     expect(mocks.preloadModelProviders).toHaveBeenCalledOnce();
@@ -93,12 +114,15 @@ describe('migrateLegacySystemModels', () => {
       status: SystemMigrationStatusEnum.succeeded
     });
     expect(context.reportProgress).toHaveBeenCalledTimes(6);
-    expect(context.logger.info).toHaveBeenCalledWith('Legacy system model migration completed', {
-      status: 'migrated',
-      sourceCount: 3,
-      targetCount: 5,
-      migratedCount: 2
-    });
+    expect(context.logger.info).toHaveBeenCalledWith(
+      'Legacy system model migration completed',
+      expect.objectContaining({
+        status: 'migrated',
+        sourceCount: 3,
+        targetCount: 5,
+        migratedCount: 2
+      })
+    );
   });
 
   it('still merges legacy data when system models already exist', async () => {
@@ -108,7 +132,17 @@ describe('migrateLegacySystemModels', () => {
     await expect(migrateLegacySystemModels(context)).resolves.toEqual({
       sourceCount: 3,
       targetCount: 5,
-      migratedCount: 2
+      migratedCount: 2,
+      systemCount: 2,
+      teamCount: 0,
+      removedCount: 0,
+      aclRemovedCount: 0,
+      invalidCount: 0,
+      skippedCount: 0,
+      clearedDefaultSlotCount: 0,
+      channelCheck: 'ok',
+      referenceCheck: 'ok',
+      warningCount: 0
     });
 
     expect(mocks.preloadModelProviders).toHaveBeenCalledOnce();
@@ -119,12 +153,15 @@ describe('migrateLegacySystemModels', () => {
     expect(mocks.loadInstalledModels).toHaveBeenCalledOnce();
     expect(context.assertActive).toHaveBeenCalledTimes(2);
     expect(context.reportProgress).toHaveBeenCalledTimes(6);
-    expect(context.logger.info).toHaveBeenCalledWith('Legacy system model migration completed', {
-      status: 'migrated',
-      sourceCount: 3,
-      targetCount: 5,
-      migratedCount: 2
-    });
+    expect(context.logger.info).toHaveBeenCalledWith(
+      'Legacy system model migration completed',
+      expect.objectContaining({
+        status: 'migrated',
+        sourceCount: 3,
+        targetCount: 5,
+        migratedCount: 2
+      })
+    );
   });
 
   it('migrates an empty legacy collection without requesting templates', async () => {
@@ -134,13 +171,34 @@ describe('migrateLegacySystemModels', () => {
       status: 'migrated',
       sourceCount: 0,
       targetCount: 0,
-      migratedCount: 0
+      migratedCount: 0,
+      systemCount: 0,
+      teamCount: 0,
+      removedCount: 0,
+      aclRemovedCount: 0,
+      invalidCount: 0,
+      skippedCount: 0,
+      clearedDefaultSlots: [],
+      removedModels: [],
+      channelCheck: 'ok',
+      referenceCheck: 'ok',
+      warnings: []
     });
 
     await expect(migrateLegacySystemModels(context)).resolves.toEqual({
       sourceCount: 0,
       targetCount: 0,
-      migratedCount: 0
+      migratedCount: 0,
+      systemCount: 0,
+      teamCount: 0,
+      removedCount: 0,
+      aclRemovedCount: 0,
+      invalidCount: 0,
+      skippedCount: 0,
+      clearedDefaultSlotCount: 0,
+      channelCheck: 'ok',
+      referenceCheck: 'ok',
+      warningCount: 0
     });
 
     expect(mocks.preloadModelProviders).not.toHaveBeenCalled();

@@ -152,5 +152,17 @@
   "migrations.20261104_backfill_openapi_key_type.description": "背景獨立回填個人密鑰與應用 Key 類型，保留原綁定、憑證及所有舊欄位。",
   "migrations.20261104_backfill_openapi_key_type.result": "已掃描 {{keys}} 個密鑰",
   "migrations.20261104_backfill_openapi_key_type.keys": "密鑰類型",
-  "migrations.20261104_backfill_openapi_key_type.validation": "驗證回填結果"
+  "migrations.20261104_backfill_openapi_key_type.validation": "驗證回填結果",
+  "migrations.20261116_migrate_legacy_dataset.name": "升級歷史知識庫資料",
+  "migrations.20261116_migrate_legacy_dataset.description": "刪除 1.6.0 已移除的 database/structureDocument 知識庫，並遷移文件解析開關、同義詞結構及資料標記。",
+  "migrations.20261116_migrate_legacy_dataset.legacyDatasets": "刪除已移除類型的知識庫",
+  "migrations.20261116_migrate_legacy_dataset.datasetFields": "遷移文件解析開關",
+  "migrations.20261116_migrate_legacy_dataset.synonyms": "遷移同義詞結構",
+  "migrations.20261116_migrate_legacy_dataset.synonymData": "遷移同義詞資料標記",
+  "migrations.20261116_migrate_legacy_dataset.result": "刪除 {{legacyDeleted}} 個知識庫，跳過 {{legacySkipped}} 個；更新 {{datasetsUpdated}} 個知識庫設定；遷移 {{synonymsMigrated}} 個同義詞設定，停用 {{synonymsDisabled}} 個；回填 {{synonymDataVersioned}} 筆資料同義詞版本，清理 {{synonymDataCleaned}} 筆歷史標記。",
+  "migrations.20261117_migrate_legacy_collection_tags.name": "遷移舊版知識庫標籤定義",
+  "migrations.20261117_migrate_legacy_collection_tags.description": "把舊版標籤定義按原 ID 複製到新版標籤表，使歷史集合標籤繼續生效；同名定義會合併並修正引用。",
+  "migrations.20261117_migrate_legacy_collection_tags.definitions": "複製標籤定義",
+  "migrations.20261117_migrate_legacy_collection_tags.validation": "校驗標籤引用",
+  "migrations.20261117_migrate_legacy_collection_tags.result": "複製 {{definitionsCopied}} 個標籤定義，合併 {{remappedDefinitions}} 個同名定義並修正 {{collectionRefsUpdated}} 個集合引用；{{danglingReferences}} 個歷史引用仍缺少定義。"
 }

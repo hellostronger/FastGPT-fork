@@ -152,5 +152,17 @@
   "migrations.20261104_backfill_openapi_key_type.description": "Backfill personal and app key types in the background, preserving bindings, credentials, and legacy fields.",
   "migrations.20261104_backfill_openapi_key_type.result": "Scanned {{keys}} keys",
   "migrations.20261104_backfill_openapi_key_type.keys": "Key types",
-  "migrations.20261104_backfill_openapi_key_type.validation": "Validate backfill"
+  "migrations.20261104_backfill_openapi_key_type.validation": "Validate backfill",
+  "migrations.20261116_migrate_legacy_dataset.name": "Upgrade legacy dataset data",
+  "migrations.20261116_migrate_legacy_dataset.description": "Delete database/structureDocument datasets removed in 1.6.0, and migrate file parse switches, synonym structures, and data markers.",
+  "migrations.20261116_migrate_legacy_dataset.legacyDatasets": "Delete removed dataset types",
+  "migrations.20261116_migrate_legacy_dataset.datasetFields": "Migrate file parse switches",
+  "migrations.20261116_migrate_legacy_dataset.synonyms": "Migrate synonym structures",
+  "migrations.20261116_migrate_legacy_dataset.synonymData": "Migrate synonym data state",
+  "migrations.20261116_migrate_legacy_dataset.result": "Deleted {{legacyDeleted}} datasets (skipped {{legacySkipped}}); updated {{datasetsUpdated}} dataset configs; migrated {{synonymsMigrated}} synonym configs (disabled {{synonymsDisabled}}); backfilled {{synonymDataVersioned}} data synonym versions and cleaned {{synonymDataCleaned}} legacy markers.",
+  "migrations.20261117_migrate_legacy_collection_tags.name": "Migrate legacy dataset tag definitions",
+  "migrations.20261117_migrate_legacy_collection_tags.description": "Copies legacy tag definitions to the new tag table with their original IDs so existing collection tags keep working; duplicate names are merged and references fixed.",
+  "migrations.20261117_migrate_legacy_collection_tags.definitions": "Copy tag definitions",
+  "migrations.20261117_migrate_legacy_collection_tags.validation": "Validate tag references",
+  "migrations.20261117_migrate_legacy_collection_tags.result": "Copied {{definitionsCopied}} tag definitions, merged {{remappedDefinitions}} duplicates and updated {{collectionRefsUpdated}} collection references; {{danglingReferences}} legacy references still have no definition."
 }

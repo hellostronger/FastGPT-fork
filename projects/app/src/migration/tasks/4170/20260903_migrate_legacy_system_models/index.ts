@@ -62,9 +62,37 @@ export const migrateLegacySystemModels = async (context: SystemMigrationContext)
   });
 
   context.logger.info('Legacy system model migration completed', result);
+  if (result.clearedDefaultSlots.length > 0) {
+    context.logger.warn('Cleared default model slots pointing to team models', {
+      slots: result.clearedDefaultSlots
+    });
+  }
+  if (result.warnings.length > 0) {
+    context.logger.warn('Legacy system model migration warnings', {
+      warnings: result.warnings
+    });
+  }
+  if (result.removedModels.length > 0) {
+    // 删除不可逆：完整记录被清理的模型名，便于人工追溯/恢复配置。
+    context.logger.warn('Removed unused legacy preset models', {
+      count: result.removedModels.length,
+      models: result.removedModels
+    });
+  }
+  // 迁移结果只允许标量写入状态表；数组明细通过日志输出。
   return {
     sourceCount: result.sourceCount,
     targetCount: result.targetCount,
-    migratedCount: result.migratedCount
+    migratedCount: result.migratedCount,
+    systemCount: result.systemCount,
+    teamCount: result.teamCount,
+    removedCount: result.removedCount,
+    aclRemovedCount: result.aclRemovedCount,
+    invalidCount: result.invalidCount,
+    skippedCount: result.skippedCount,
+    clearedDefaultSlotCount: result.clearedDefaultSlots.length,
+    channelCheck: result.channelCheck,
+    referenceCheck: result.referenceCheck,
+    warningCount: result.warnings.length
   };
 };
