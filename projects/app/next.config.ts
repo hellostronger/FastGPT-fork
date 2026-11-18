@@ -66,6 +66,17 @@ const nextConfig: NextConfig = {
     }
   },
   transpilePackages: ['@modelcontextprotocol/sdk', 'ahooks'],
+  // Verify-env only: allow the box's LAN origin so Next 16 dev serves HMR/dev assets.
+  allowedDevOrigins: ['10.49.20.28'],
+  // Verify-env only: webpack (next dev --webpack) ignores serverExternalPackages and
+  // tries to bundle the @node-rs/jieba native module, failing the build. Keep it external.
+  webpack: (config, { isServer }) => {
+    if (isServer) {
+      config.externals = Array.isArray(config.externals) ? config.externals : [config.externals];
+      config.externals.push({ '@node-rs/jieba': 'commonjs @node-rs/jieba' });
+    }
+    return config;
+  },
   serverExternalPackages: [
     '@node-rs/jieba',
     'bullmq',
