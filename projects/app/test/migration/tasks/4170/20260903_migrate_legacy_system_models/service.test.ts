@@ -6,7 +6,13 @@ import {
   bootstrapAIModelsFromLegacy,
   inspectLegacySystemModelMigration
 } from '@/migration/tasks/4170/20260903_migrate_legacy_system_models/service';
+import { Types } from '@fastgpt/service/common/mongo';
+import { OwnerRoleVal, PerResourceTypeEnum } from '@fastgpt/global/support/permission/constant';
 import { MongoAIModel } from '@fastgpt/service/core/ai/model/schema';
+import { MongoResourcePermission } from '@fastgpt/service/support/permission/schema';
+import { MongoTeamMember } from '@fastgpt/service/support/user/team/teamMemberSchema';
+import { MongoUser } from '@fastgpt/service/support/user/schema';
+import { MongoModelStatusProbeRecord } from '@fastgpt/service/core/ai/modelStatus/schema';
 import { MongoAIModelCatalog } from '@fastgpt/service/core/ai/model/catalog/schema';
 import {
   getCachedSystemModelHandle,
@@ -36,6 +42,8 @@ const pluginLlm: AIModelDocumentDataType = {
 
 const createLegacyLlm = (model: string) => ({
   model,
+  // 预置模型：150 落库时显式写入 isCustom: false
+  isCustom: false,
   metadata: {
     type: ModelTypeEnum.llm,
     provider: 'OpenAI',
@@ -55,12 +63,14 @@ describe('bootstrapAIModelsFromLegacy', () => {
     await Promise.all([
       MongoAIModel.deleteMany({}),
       MongoAIModelCatalog.deleteMany({}),
+      MongoTeamMember.deleteMany({}),
+      MongoUser.deleteMany({}),
       legacyCollection.deleteMany({})
     ]);
   });
 
   it('keeps a fresh installation empty when no legacy models exist', async () => {
-    await expect(bootstrapAIModelsFromLegacy({ pluginDocuments: [] })).resolves.toEqual({
+    await expect(bootstrapAIModelsFromLegacy({ pluginDocuments: [] })).resolves.toMatchObject({
       status: 'migrated',
       sourceCount: 0,
       targetCount: 0,
@@ -125,7 +135,7 @@ describe('bootstrapAIModelsFromLegacy', () => {
       isDefault: true
     });
 
-    await expect(bootstrapAIModelsFromLegacy({ pluginDocuments: [] })).resolves.toEqual({
+    await expect(bootstrapAIModelsFromLegacy({ pluginDocuments: [] })).resolves.toMatchObject({
       status: 'migrated',
       sourceCount: 1,
       targetCount: 2,
@@ -151,6 +161,7 @@ describe('bootstrapAIModelsFromLegacy', () => {
       },
       {
         model: 'legacy-default-embedding',
+        isCustom: false,
         isActive: true,
         metadata: {
           type: ModelTypeEnum.embedding,
@@ -187,7 +198,7 @@ describe('bootstrapAIModelsFromLegacy', () => {
     await MongoAIModel.create(pluginLlm);
     const legacy = await legacyCollection.insertOne(createLegacyLlm('legacy-model'));
 
-    await expect(bootstrapAIModelsFromLegacy({ pluginDocuments: [] })).resolves.toEqual({
+    await expect(bootstrapAIModelsFromLegacy({ pluginDocuments: [] })).resolves.toMatchObject({
       status: 'migrated',
       sourceCount: 1,
       targetCount: 2,
@@ -219,7 +230,7 @@ describe('bootstrapAIModelsFromLegacy', () => {
       }
     ]);
 
-    await expect(bootstrapAIModelsFromLegacy({ pluginDocuments: [] })).resolves.toEqual({
+    await expect(bootstrapAIModelsFromLegacy({ pluginDocuments: [] })).resolves.toMatchObject({
       status: 'migrated',
       sourceCount: 2,
       targetCount: 1,
@@ -235,16 +246,21 @@ describe('bootstrapAIModelsFromLegacy', () => {
     await expect(legacyCollection.countDocuments()).resolves.toBe(2);
   });
 
-  it('rejects an invalid legacy record before writing any candidate', async () => {
+  it('skips an invalid legacy record and keeps migrating the rest', async () => {
     await legacyCollection.insertMany([
       createLegacyLlm('valid-before-invalid'),
-      { model: 'invalid-model', metadata: { type: 'unknown' } }
+      { model: 'invalid-model', isCustom: false, metadata: { type: 'unknown' } }
     ]);
 
-    await expect(bootstrapAIModelsFromLegacy({ pluginDocuments: [] })).rejects.toThrow(
-      'Invalid legacy system model'
-    );
-    await expect(MongoAIModel.countDocuments()).resolves.toBe(0);
+    await expect(
+      bootstrapAIModelsFromLegacy({ pluginDocuments: [] })
+    ).resolves.toMatchObject({
+      status: 'migrated',
+      sourceCount: 2,
+      migratedCount: 1,
+      invalidCount: 1
+    });
+    await expect(MongoAIModel.countDocuments()).resolves.toBe(1);
     await expect(legacyCollection.countDocuments()).resolves.toBe(2);
   });
 
@@ -284,7 +300,7 @@ describe('bootstrapAIModelsFromLegacy', () => {
       }
     });
 
-    await expect(bootstrapAIModelsFromLegacy({ pluginDocuments: [pluginLlm] })).resolves.toEqual({
+    await expect(bootstrapAIModelsFromLegacy({ pluginDocuments: [pluginLlm] })).resolves.toMatchObject({
       status: 'migrated',
       sourceCount: 1,
       targetCount: 1,
@@ -302,6 +318,7 @@ describe('bootstrapAIModelsFromLegacy', () => {
   it('writes only canonical fields while leaving the legacy snapshot unchanged', async () => {
     const legacyDocument = {
       model: 'mixed-legacy-model',
+      isCustom: false,
       type: ModelTypeEnum.llm,
       provider: 'Top-level provider',
       name: 'Top-level name',
@@ -350,7 +367,7 @@ describe('bootstrapAIModelsFromLegacy', () => {
       }
     });
 
-    await expect(bootstrapAIModelsFromLegacy({ pluginDocuments: [] })).resolves.toEqual({
+    await expect(bootstrapAIModelsFromLegacy({ pluginDocuments: [] })).resolves.toMatchObject({
       status: 'migrated',
       sourceCount: 1,
       targetCount: 1,
@@ -376,7 +393,7 @@ describe('bootstrapAIModelsFromLegacy', () => {
       { $set: { name: 'Target changed again' } }
     );
 
-    await expect(bootstrapAIModelsFromLegacy({ pluginDocuments: [] })).resolves.toEqual({
+    await expect(bootstrapAIModelsFromLegacy({ pluginDocuments: [] })).resolves.toMatchObject({
       status: 'migrated',
       sourceCount: 1,
       targetCount: 1,
@@ -410,7 +427,7 @@ describe('bootstrapAIModelsFromLegacy', () => {
       defaultModelIds: { llm: String(conflictingTarget._id) }
     });
 
-    await expect(bootstrapAIModelsFromLegacy({ pluginDocuments: [] })).resolves.toEqual({
+    await expect(bootstrapAIModelsFromLegacy({ pluginDocuments: [] })).resolves.toMatchObject({
       status: 'migrated',
       sourceCount: 1,
       targetCount: 2,
@@ -438,6 +455,7 @@ describe('bootstrapAIModelsFromLegacy', () => {
   it('replaces a same-name target with legacy metadata', async () => {
     const legacy = await legacyCollection.insertOne({
       model: 'same-name-embedding',
+      isCustom: false,
       metadata: {
         type: ModelTypeEnum.embedding,
         provider: 'OpenAI',
@@ -527,7 +545,7 @@ describe('bootstrapAIModelsFromLegacy', () => {
     });
   });
 
-  it('rejects a legacy id collision without changing the unrelated target model', async () => {
+  it('skips a legacy id collision without changing the unrelated target model', async () => {
     const legacy = await legacyCollection.insertOne(createLegacyLlm('legacy-id-conflict'));
     await MongoAIModel.create({
       _id: legacy.insertedId,
@@ -535,13 +553,17 @@ describe('bootstrapAIModelsFromLegacy', () => {
       model: 'unrelated-target'
     });
 
-    await expect(bootstrapAIModelsFromLegacy({ pluginDocuments: [] })).rejects.toThrow(
-      'Legacy system model id conflicts with target model'
-    );
+    await expect(
+      bootstrapAIModelsFromLegacy({ pluginDocuments: [] })
+    ).resolves.toMatchObject({
+      status: 'migrated',
+      sourceCount: 1,
+      migratedCount: 0
+    });
     await expect(MongoAIModel.findById(legacy.insertedId).lean()).resolves.toMatchObject({
       model: 'unrelated-target'
     });
-    await expect(MongoAIModelCatalog.exists({ scope: 'system' })).resolves.toBeNull();
+    await expect(MongoAIModel.exists({ model: 'legacy-id-conflict' })).resolves.toBeNull();
   });
 
   it('rejects a legacy model whose type conflicts with its plugin template before writing', async () => {
@@ -596,7 +618,7 @@ describe('bootstrapAIModelsFromLegacy', () => {
       return cursor;
     });
 
-    await expect(bootstrapAIModelsFromLegacy({ pluginDocuments: [] })).resolves.toEqual({
+    await expect(bootstrapAIModelsFromLegacy({ pluginDocuments: [] })).resolves.toMatchObject({
       status: 'migrated',
       sourceCount: 1,
       targetCount: 2,
@@ -607,5 +629,397 @@ describe('bootstrapAIModelsFromLegacy', () => {
     ).resolves.not.toBeNull();
     await expect(MongoAIModel.findOne({ model: 'legacy-race-model' })).resolves.not.toBeNull();
     await expect(MongoAIModelCatalog.exists({ scope: 'system' })).resolves.not.toBeNull();
+  });
+
+  it('deletes unused preset models together with ACLs and probe records', async () => {
+    const legacy = await legacyCollection.insertOne({
+      ...createLegacyLlm('unused-preset'),
+      isActive: true
+    });
+    await MongoResourcePermission.collection.insertOne({
+      teamId: new Types.ObjectId(),
+      tmbId: new Types.ObjectId(),
+      resourceType: PerResourceTypeEnum.model,
+      resourceId: legacy.insertedId,
+      permission: 4
+    });
+    await MongoModelStatusProbeRecord.collection.insertOne({
+      modelId: String(legacy.insertedId),
+      name: 'unused-preset',
+      model: 'unused-preset',
+      provider: 'OpenAI',
+      type: 'llm',
+      status: 'green',
+      attempts: 1,
+      startedAt: new Date(),
+      requestStartedAt: new Date(),
+      requestEndedAt: new Date()
+    });
+
+    const result = await bootstrapAIModelsFromLegacy({
+      pluginDocuments: [],
+      resolveChannelModels: async () => new Set(['channel-placeholder']),
+      resolveReferencedTokens: async () => new Set<string>()
+    });
+
+    expect(result).toMatchObject({
+      status: 'migrated',
+      sourceCount: 1,
+      migratedCount: 1,
+      removedCount: 1
+    });
+    expect(result.removedModels).toEqual(['unused-preset']);
+    await expect(MongoAIModel.exists({ _id: legacy.insertedId })).resolves.toBeNull();
+    await expect(
+      MongoResourcePermission.countDocuments({ resourceId: legacy.insertedId })
+    ).resolves.toBe(0);
+    await expect(
+      MongoModelStatusProbeRecord.countDocuments({ modelId: String(legacy.insertedId) })
+    ).resolves.toBe(0);
+  });
+
+  it('skips cleanup when the AI Proxy channel list is empty', async () => {
+    const legacy = await legacyCollection.insertOne({
+      ...createLegacyLlm('unconfigured-preset'),
+      isActive: true
+    });
+
+    const result = await bootstrapAIModelsFromLegacy({
+      pluginDocuments: [],
+      resolveChannelModels: async () => new Set<string>(),
+      resolveReferencedTokens: async () => new Set<string>()
+    });
+
+    expect(result.removedCount).toBe(0);
+    await expect(MongoAIModel.exists({ _id: legacy.insertedId })).resolves.not.toBeNull();
+    expect(result.warnings.some((item) => item.includes('channel list is empty'))).toBe(true);
+  });
+
+  it('keeps referenced, channel-bound, default and custom models', async () => {
+    const referenced = await legacyCollection.insertOne({
+      ...createLegacyLlm('referenced-model'),
+      isActive: true
+    });
+    const channelModel = await legacyCollection.insertOne({
+      ...createLegacyLlm('channel-model'),
+      isActive: true
+    });
+    const defaultModel = await legacyCollection.insertOne({
+      ...createLegacyLlm('default-model'),
+      isActive: true,
+      isDefault: true
+    });
+    const custom = await legacyCollection.insertOne({
+      ...createLegacyLlm('custom-model'),
+      isCustom: true,
+      isShared: true,
+      isActive: true
+    });
+
+    const result = await bootstrapAIModelsFromLegacy({
+      pluginDocuments: [],
+      resolveChannelModels: async () => new Set(['channel-model']),
+      resolveReferencedTokens: async () => new Set(['referenced-model'])
+    });
+
+    expect(result.removedCount).toBe(0);
+    for (const id of [
+      referenced.insertedId,
+      channelModel.insertedId,
+      defaultModel.insertedId,
+      custom.insertedId
+    ]) {
+      await expect(MongoAIModel.exists({ _id: id })).resolves.not.toBeNull();
+    }
+  });
+
+  it('keeps non-root private models in system scope and preserves their ACL', async () => {
+    const teamId = new Types.ObjectId();
+    const tmbId = new Types.ObjectId();
+    // 150 的老成员记录可能没有 status；本规则不依赖成员状态。
+    await MongoTeamMember.collection.insertOne({
+      _id: tmbId,
+      teamId,
+      userId: new Types.ObjectId(),
+      name: 'Legacy creator'
+    });
+    const legacy = await legacyCollection.insertOne({
+      ...createLegacyLlm('member-private-llm'),
+      isCustom: true,
+      isShared: false,
+      isActive: true,
+      tmbId,
+      teamId
+    });
+    await MongoResourcePermission.collection.insertMany([
+      {
+        teamId,
+        tmbId,
+        resourceType: PerResourceTypeEnum.model,
+        resourceId: legacy.insertedId,
+        permission: OwnerRoleVal
+      },
+      {
+        teamId,
+        tmbId: new Types.ObjectId(),
+        resourceType: PerResourceTypeEnum.model,
+        resourceId: legacy.insertedId,
+        permission: 4
+      }
+    ]);
+
+    const result = await bootstrapAIModelsFromLegacy({
+      pluginDocuments: [],
+      resolveChannelModels: async () => undefined,
+      resolveReferencedTokens: async () => undefined
+    });
+
+    expect(result).toMatchObject({ systemCount: 1, teamCount: 0 });
+    const migrated = await MongoAIModel.findById(legacy.insertedId).lean();
+    expect(migrated).toMatchObject({ scope: 'system', model: 'member-private-llm' });
+    // 系统模型不再携带归属字段
+    expect(migrated).not.toHaveProperty('tmbId');
+    expect(migrated).not.toHaveProperty('teamId');
+    // 私有模型的 ACL 原样保留，可见范围与 150 一致
+    await expect(
+      MongoResourcePermission.countDocuments({ resourceId: legacy.insertedId })
+    ).resolves.toBe(2);
+  });
+
+  it('makes root private models public when only the owner ACL exists', async () => {
+    const teamId = new Types.ObjectId();
+    const rootUserId = new Types.ObjectId();
+    const rootTmbId = new Types.ObjectId();
+    await MongoUser.collection.insertOne({ _id: rootUserId, username: 'root' });
+    await MongoTeamMember.collection.insertOne({
+      _id: rootTmbId,
+      teamId,
+      userId: rootUserId,
+      status: 'active',
+      role: 'owner'
+    });
+    const legacy = await legacyCollection.insertOne({
+      ...createLegacyLlm('root-private-llm'),
+      isCustom: true,
+      isShared: false,
+      isActive: true,
+      tmbId: rootTmbId,
+      teamId
+    });
+    await MongoResourcePermission.collection.insertOne({
+      teamId,
+      tmbId: rootTmbId,
+      resourceType: PerResourceTypeEnum.model,
+      resourceId: legacy.insertedId,
+      permission: OwnerRoleVal
+    });
+
+    await bootstrapAIModelsFromLegacy({
+      pluginDocuments: [],
+      resolveChannelModels: async () => undefined,
+      resolveReferencedTokens: async () => undefined
+    });
+
+    await expect(MongoAIModel.findById(legacy.insertedId).lean()).resolves.toMatchObject({
+      scope: 'system'
+    });
+    // 只有 root 一条 ACL：删除后恢复全员可见
+    await expect(
+      MongoResourcePermission.countDocuments({ resourceId: legacy.insertedId })
+    ).resolves.toBe(0);
+  });
+
+  it('keeps collaborator ACLs for root private models', async () => {
+    const teamId = new Types.ObjectId();
+    const rootUserId = new Types.ObjectId();
+    const rootTmbId = new Types.ObjectId();
+    await MongoUser.collection.insertOne({ _id: rootUserId, username: 'root' });
+    await MongoTeamMember.collection.insertOne({
+      _id: rootTmbId,
+      teamId,
+      userId: rootUserId,
+      status: 'active'
+    });
+    const legacy = await legacyCollection.insertOne({
+      ...createLegacyLlm('root-private-with-collaborator'),
+      isCustom: true,
+      isShared: false,
+      isActive: true,
+      tmbId: rootTmbId,
+      teamId
+    });
+    await MongoResourcePermission.collection.insertMany([
+      {
+        teamId,
+        tmbId: rootTmbId,
+        resourceType: PerResourceTypeEnum.model,
+        resourceId: legacy.insertedId,
+        permission: OwnerRoleVal
+      },
+      {
+        teamId,
+        tmbId: new Types.ObjectId(),
+        resourceType: PerResourceTypeEnum.model,
+        resourceId: legacy.insertedId,
+        permission: 4
+      }
+    ]);
+
+    await bootstrapAIModelsFromLegacy({
+      pluginDocuments: [],
+      resolveChannelModels: async () => undefined,
+      resolveReferencedTokens: async () => undefined
+    });
+
+    await expect(MongoAIModel.findById(legacy.insertedId).lean()).resolves.toMatchObject({
+      scope: 'system'
+    });
+    // 包含其他协作者时保持 150 的可见范围
+    await expect(
+      MongoResourcePermission.countDocuments({ resourceId: legacy.insertedId })
+    ).resolves.toBe(2);
+  });
+
+  it('clears every ACL of a shared model to keep it visible to everyone', async () => {
+    const teamId = new Types.ObjectId();
+    const shared = await legacyCollection.insertOne({
+      ...createLegacyLlm('shared-with-collaborator'),
+      isCustom: true,
+      isShared: true,
+      isActive: true
+    });
+    await MongoResourcePermission.collection.insertMany([
+      {
+        teamId,
+        tmbId: new Types.ObjectId(),
+        resourceType: PerResourceTypeEnum.model,
+        resourceId: shared.insertedId,
+        permission: OwnerRoleVal
+      },
+      {
+        teamId,
+        tmbId: new Types.ObjectId(),
+        resourceType: PerResourceTypeEnum.model,
+        resourceId: shared.insertedId,
+        permission: 4
+      }
+    ]);
+
+    await bootstrapAIModelsFromLegacy({
+      pluginDocuments: [],
+      resolveChannelModels: async () => undefined,
+      resolveReferencedTokens: async () => undefined
+    });
+
+    await expect(
+      MongoResourcePermission.countDocuments({ resourceId: shared.insertedId })
+    ).resolves.toBe(0);
+  });
+
+  it('keeps a private model without creator info in system scope and preserves ACL', async () => {
+    const teamId = new Types.ObjectId();
+    const legacy = await legacyCollection.insertOne({
+      ...createLegacyLlm('orphan-private'),
+      isCustom: true,
+      isShared: false,
+      isActive: true
+    });
+    await MongoResourcePermission.collection.insertOne({
+      teamId,
+      tmbId: new Types.ObjectId(),
+      resourceType: PerResourceTypeEnum.model,
+      resourceId: legacy.insertedId,
+      permission: OwnerRoleVal
+    });
+
+    const result = await bootstrapAIModelsFromLegacy({
+      pluginDocuments: [],
+      resolveChannelModels: async () => undefined,
+      resolveReferencedTokens: async () => undefined
+    });
+
+    expect(result).toMatchObject({ systemCount: 1, teamCount: 0, skippedCount: 0 });
+    await expect(MongoAIModel.findById(legacy.insertedId).lean()).resolves.toMatchObject({
+      scope: 'system'
+    });
+    await expect(
+      MongoResourcePermission.countDocuments({ resourceId: legacy.insertedId })
+    ).resolves.toBe(1);
+  });
+
+  it('keeps a system default that points to a formerly private model', async () => {
+    const teamId = new Types.ObjectId();
+    const tmbId = new Types.ObjectId();
+    await MongoTeamMember.collection.insertOne({
+      _id: tmbId,
+      teamId,
+      userId: new Types.ObjectId(),
+      status: 'active'
+    });
+    const legacy = await legacyCollection.insertOne({
+      ...createLegacyLlm('private-default'),
+      isCustom: true,
+      isShared: false,
+      isActive: true,
+      tmbId,
+      teamId
+    });
+    await MongoAIModel.create({
+      _id: legacy.insertedId,
+      type: ModelTypeEnum.llm,
+      provider: 'OpenAI',
+      model: 'private-default',
+      name: 'private-default',
+      scope: 'system',
+      isActive: true,
+      config: { maxContext: 32000, maxResponse: 16000, quoteMaxToken: 24000 }
+    });
+    await MongoAIModelCatalog.create({
+      scope: 'system',
+      defaultModelIds: { llm: String(legacy.insertedId) }
+    });
+
+    const result = await bootstrapAIModelsFromLegacy({
+      pluginDocuments: [],
+      resolveChannelModels: async () => undefined,
+      resolveReferencedTokens: async () => undefined
+    });
+
+    expect(result.clearedDefaultSlots).not.toContain('llm');
+    await expect(MongoAIModel.findById(legacy.insertedId).lean()).resolves.toMatchObject({
+      scope: 'system'
+    });
+    const catalog = await MongoAIModelCatalog.findOne({ scope: 'system' }).lean();
+    expect((catalog?.defaultModelIds as any)?.llm).toBe(String(legacy.insertedId));
+  });
+
+  it('keeps preset models in system scope even when isShared is false', async () => {
+    const teamId = new Types.ObjectId();
+    const tmbId = new Types.ObjectId();
+    await MongoTeamMember.collection.insertOne({
+      _id: tmbId,
+      teamId,
+      userId: new Types.ObjectId(),
+      status: 'active'
+    });
+    const legacy = await legacyCollection.insertOne({
+      ...createLegacyLlm('preset-with-owner'),
+      isCustom: false,
+      isShared: false,
+      isActive: true,
+      tmbId,
+      teamId
+    });
+
+    const result = await bootstrapAIModelsFromLegacy({
+      pluginDocuments: [],
+      resolveChannelModels: async () => undefined,
+      resolveReferencedTokens: async () => undefined
+    });
+
+    expect(result).toMatchObject({ teamCount: 0 });
+    await expect(MongoAIModel.findById(legacy.insertedId).lean()).resolves.toMatchObject({
+      scope: 'system'
+    });
   });
 });

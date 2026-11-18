@@ -17,12 +17,13 @@ export type ModelCatalog = Awaited<ReturnType<typeof loadModelCatalog>>;
  * 由增量迁移记录逐条失败，避免空集合误报失败或历史引用被跳过后无法重试。
  */
 export const loadModelCatalog = async () => {
-  const [models, defaultModelIds] = await Promise.all([
-    MongoAIModel.find({ scope: ModelScopeEnum.system }).sort({ _id: 1 }).lean() as Promise<
-      StoredModel[]
-    >,
+  const [allModels, defaultModelIds] = await Promise.all([
+    // 团队模型也需要参与 id 匹配：迁移后的应用/知识库引用和模型 ACL 都可能指向 team scope。
+    MongoAIModel.find({}).sort({ _id: 1 }).lean() as Promise<StoredModel[]>,
     findSystemDefaultModelIds()
   ]);
+  /** 名称回退只允许系统模型，避免跨团队同名模型误匹配。 */
+  const models = allModels.filter((model) => model.scope === ModelScopeEnum.system);
   /** 仅保护需要模型目录的操作，空集合和无引用资源仍可按正常流程完成迁移。 */
   const assertAvailable = () => {
     if (models.length === 0) {
@@ -40,7 +41,7 @@ export const loadModelCatalog = async () => {
       modelsByName.set(model.name, list);
     }
   }
-  const modelById = new Map(models.map((model) => [String(model._id), model]));
+  const modelById = new Map(allModels.map((model) => [String(model._id), model]));
 
   const matchesRequirement = (model: StoredModel, requirement: ModelRequirement) =>
     model.type === requirement.type &&
@@ -72,7 +73,8 @@ export const loadModelCatalog = async () => {
     /**
      * 知识库理解模型依次检查有效 ID、精确旧名称；图片理解要求视觉能力。
      * 文本理解未配置旧名称也补默认，图片理解旧名称为空则不补默认，但仍优先保留有效 ID。
-     * 已配置默认模型不检查启用状态；仅未配置默认时按 _id 升序选择首个启用的兼容模型。
+     * 迁移回填只使用启用的系统模型：默认模型和按 _id 兜底的首个候选都要求 isActive，
+     * 避免把停用/不可用模型写入历史应用。
      * 原模型仅停用时保留原选择；无法解析配置的默认模型或没有兼容候选时不生成 ID。
      */
     resolveDatasetUnderstandingModelId: ({
@@ -146,11 +148,16 @@ export const loadModelCatalog = async () => {
       const configuredDefault = configuredDefaultId
         ? modelById.get(configuredDefaultId)
         : undefined;
-      if (configuredDefault && matchesRequirement(configuredDefault, requirement)) {
+      if (
+        configuredDefault?.isActive === true &&
+        matchesRequirement(configuredDefault, requirement)
+      ) {
         return String(configuredDefault._id);
       }
 
-      const firstMatchingModel = models.find((model) => matchesRequirement(model, requirement));
+      const firstMatchingModel = models.find(
+        (model) => model.isActive === true && matchesRequirement(model, requirement)
+      );
       return firstMatchingModel ? String(firstMatchingModel._id) : undefined;
     },
     hasModelId: (modelId: unknown) => {
