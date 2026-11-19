@@ -84,6 +84,13 @@ const MAX_REFERENCE_DOCS = 200_000;
 /** 引用扫描是启动阻塞步骤：超时则跳过清理（只报告），避免拖慢升级。 */
 const MAX_REFERENCE_SCAN_MS = 60_000;
 
+/** 把 unknown[] 归一成 Mongo `$in` 可用的 ObjectId[]（强类型，非法 id 忽略）。 */
+const toObjectIdList = (ids: unknown[]): Types.ObjectId[] =>
+  ids
+    .filter((id): id is string | Types.ObjectId => typeof id === 'string' || id instanceof Types.ObjectId)
+    .filter((id) => Types.ObjectId.isValid(id))
+    .map((id) => new Types.ObjectId(id));
+
 const defaultModelKeys = [
   ModelTypeEnum.llm,
   ModelTypeEnum.embedding,
@@ -347,7 +354,7 @@ export const bootstrapAIModelsFromLegacy = async ({
         : await MongoAIModel.collection
             .find(
               {
-                _id: { $in: systemCandidates.map((candidate) => candidate.legacyId) },
+                _id: { $in: toObjectIdList(systemCandidates.map((candidate) => candidate.legacyId)) },
                 scope: ModelScopeEnum.team
               },
               { projection: { _id: 1, model: 1 }, session }
@@ -413,7 +420,7 @@ export const bootstrapAIModelsFromLegacy = async ({
     // 旧版本迁移可能已把被去重的 _id 写成 system scope，这里一并清理，保证重复执行收敛。
     if (duplicateLegacyIds.length > 0) {
       await MongoAIModel.collection.deleteMany(
-        { _id: { $in: duplicateLegacyIds }, scope: ModelScopeEnum.system },
+        { _id: { $in: toObjectIdList(duplicateLegacyIds) }, scope: ModelScopeEnum.system },
         { session }
       );
     }
@@ -530,7 +537,7 @@ export const bootstrapAIModelsFromLegacy = async ({
     // 被同名去重丢弃的旧模型可能残留文档、ACL、探测记录。
     if (duplicateLegacyIds.length > 0) {
       await MongoAIModel.collection.deleteMany(
-        { _id: { $in: duplicateLegacyIds }, scope: ModelScopeEnum.system },
+        { _id: { $in: toObjectIdList(duplicateLegacyIds) }, scope: ModelScopeEnum.system },
         { session }
       );
       await MongoModelStatusProbeRecord.deleteMany(
