@@ -710,6 +710,98 @@ describe('runFastAgentLoop', () => {
     );
   });
 
+  // 1.6.x 发布线不含 plugin/moderation 模块（上游 main 独有），该用例依赖内容审核链路，跳过。
+  it.skip('removes blocked images from interactive tool resume', async () => {
+    const modelInput = await import('@fastgpt/service/core/plugin/moderation/modelInput');
+    const { MODERATION_BLOCKED_REPLACE_TEXT } =
+      await import('@fastgpt/global/core/plugin/moderation/constants');
+    const moderationSpy = vi
+      .spyOn(modelInput, 'checkToolResultModeration')
+      .mockResolvedValue(MODERATION_BLOCKED_REPLACE_TEXT);
+    const usagePush = vi.fn();
+    const emitEvent = vi.fn();
+    const interactiveUsage = {
+      moduleName: 'Interactive tool',
+      totalPoints: 3
+    };
+    const executeInteractiveTool = vi.fn(async () => ({
+      response: 'interactive response',
+      content: [
+        {
+          type: 'image_url' as const,
+          image_url: {
+            url: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/aN8AAAAASUVORK5CYII='
+          }
+        }
+      ],
+      assistantMessages: [],
+      usages: [interactiveUsage],
+      stop: true
+    }));
+
+    await runFastAgentLoop({
+      input: {
+        messages: [
+          {
+            role: ChatCompletionRequestMessageRoleEnum.Assistant,
+            content: null,
+            tool_calls: [
+              {
+                id: 'call_interactive',
+                type: 'function',
+                function: {
+                  name: 'select_project',
+                  arguments: '{"scope":"active"}'
+                }
+              }
+            ]
+          }
+        ],
+        childrenInteractiveParams: {
+          childrenResponse: {
+            type: 'userSelect'
+          },
+          toolCallId: 'call_interactive'
+        }
+      },
+      runtime: createRuntime({
+        executeInteractiveTool,
+        usagePush,
+        emitEvent
+      })
+    });
+
+    expect(executeInteractiveTool).toHaveBeenCalledWith(
+      expect.objectContaining({
+        call: expect.objectContaining({
+          id: 'call_interactive',
+          function: expect.objectContaining({
+            name: 'select_project',
+            arguments: '{"scope":"active"}'
+          })
+        }),
+        messages: expect.arrayContaining([
+          expect.objectContaining({
+            role: ChatCompletionRequestMessageRoleEnum.Assistant
+          })
+        ])
+      })
+    );
+    expect(JSON.stringify(emitEvent.mock.calls)).not.toContain(
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/aN8AAAAASUVORK5CYII='
+    );
+    expect(usagePush).toHaveBeenCalledWith([interactiveUsage]);
+    expect(emitEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'tool_run_end',
+        call: expect.objectContaining({ id: 'call_interactive' }),
+        response: MODERATION_BLOCKED_REPLACE_TEXT,
+        usages: [interactiveUsage]
+      })
+    );
+    moderationSpy.mockRestore();
+  });
+
   it('turns an interactive tool resume exception into a tool response and continues', async () => {
     const emitEvent = vi.fn();
     mockCreateLLMResponseQueue(createLLMResponseMock, [
