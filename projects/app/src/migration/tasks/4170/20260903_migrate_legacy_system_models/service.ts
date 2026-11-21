@@ -252,10 +252,22 @@ export const bootstrapAIModelsFromLegacy = async ({
       continue;
     }
 
+    // 不改变 system scope（避免团队渠道/系统渠道语义变化），只保留 150 的创建人/团队归属，
+    // 供模型列表展示原始创建人，而不是统一显示 root。
+    const document = {
+      ...result.document,
+      ...(ids.tmbId && Types.ObjectId.isValid(ids.tmbId)
+        ? { tmbId: new Types.ObjectId(ids.tmbId) }
+        : {}),
+      ...(ids.teamId && Types.ObjectId.isValid(ids.teamId)
+        ? { teamId: new Types.ObjectId(ids.teamId) }
+        : {})
+    } as unknown as typeof result.document;
+
     const candidate: MigrationCandidate = {
       legacyId,
       legacyRecord: record,
-      document: result.document,
+      document,
       defaultFlags: getLegacyDefaultModelFlags(record),
       order,
       // 非 root 创建的私有模型保留 150 的 ACL；其余模型沿用原有 ACL 归一规则。
@@ -263,14 +275,14 @@ export const bootstrapAIModelsFromLegacy = async ({
     };
 
     // 历史上若同名模型被重复保存，以较新的记录为准，避免唯一索引阻断整次迁移。
-    const previous = systemByModel.get(result.document.model);
+    const previous = systemByModel.get(document.model);
     if (previous) {
       duplicateLegacyIds.push(previous.legacyId);
       warnings.push(
-        `duplicate system model: ${result.document.model} (${String(previous.legacyId)} -> ${String(legacyId)})`
+        `duplicate system model: ${document.model} (${String(previous.legacyId)} -> ${String(legacyId)})`
       );
     }
-    systemByModel.set(result.document.model, candidate);
+    systemByModel.set(document.model, candidate);
   }
 
   const systemCandidates = Array.from(systemByModel.values()).sort((a, b) => a.order - b.order);

@@ -777,9 +777,9 @@ describe('bootstrapAIModelsFromLegacy', () => {
     expect(result).toMatchObject({ systemCount: 1, teamCount: 0 });
     const migrated = await MongoAIModel.findById(legacy.insertedId).lean();
     expect(migrated).toMatchObject({ scope: 'system', model: 'member-private-llm' });
-    // 系统模型不再携带归属字段
-    expect(migrated).not.toHaveProperty('tmbId');
-    expect(migrated).not.toHaveProperty('teamId');
+    // 保持 system scope，但保留 150 的创建人/团队归属，用于模型列表展示原始创建人。
+    expect(String(migrated?.tmbId)).toBe(String(tmbId));
+    expect(String(migrated?.teamId)).toBe(String(teamId));
     // 私有模型的 ACL 原样保留，可见范围与 150 一致
     await expect(
       MongoResourcePermission.countDocuments({ resourceId: legacy.insertedId })
