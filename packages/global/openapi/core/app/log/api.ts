@@ -202,6 +202,13 @@ export type exportChatLogsResponseType = z.infer<typeof ExportChatLogsResponseSc
 /* Export chat log */
 export const ExportChatLogsBodySchema = createAppApiKeyInputSchema(
   AppChatLogsFilterSchema.safeExtend({
+    searchType: z
+      .enum(['title', 'chatId'])
+      .optional()
+      .meta({
+        description: '搜索类型：title 搜索标题，chatId 精确匹配会话 ID；省略时兼容旧搜索',
+        example: 'title'
+      }),
     title: z.string().meta({
       example: 'chat logs',
       description: '标题'
