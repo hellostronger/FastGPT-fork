@@ -27,6 +27,7 @@ import { authApp } from '@fastgpt/service/support/permission/app/auth';
 import { getAuthorizedModelIds } from '@fastgpt/service/support/permission/model/auth';
 import { resolveAppResourcesByPermission } from '@fastgpt/service/core/app/resource/service';
 import { addAuditLog, getI18nAppType } from '@fastgpt/service/support/user/audit/util';
+import { hasDebugToolInNodes } from '@fastgpt/global/core/app/utils';
 
 /** 保存或发布应用版本，资源归属和模型目录以目标应用团队为边界，ACL 保留实际操作者身份。 */
 async function handler(req: ApiRequestProps<PostPublishAppProps>) {
@@ -49,6 +50,9 @@ async function handler(req: ApiRequestProps<PostPublishAppProps>) {
   // Root 可管理其他团队的应用；登录团队不能替代应用团队决定资源归属、默认模型和审计范围。
   const teamId = String(app.teamId);
   const normalizedWorkflow = migrateWorkflowToCurrent({ nodes, edges, chatConfig });
+  if (isPublish && hasDebugToolInNodes(normalizedWorkflow.nodes)) {
+    return Promise.reject(i18nT('app:publish_remove_debug_tool_tip'));
+  }
   const modelHandle = await getTeamModelHandle({ teamId });
   const authorizedIds = await getAuthorizedModelIds({
     actor: { teamId, tmbId, isRoot },

@@ -1,6 +1,7 @@
 import type { WorkflowDataContextType } from '@/pageComponents/app/detail/WorkflowComponents/context/workflowInitContext';
 import { getNanoid } from '@fastgpt/global/common/string/tools';
 import { isEmptyModelValue } from '@fastgpt/global/core/ai/model/reference';
+import { stripAgentPromptRefs } from '@fastgpt/global/core/workflow/node/agent/promptRef/protocol';
 import { normalizeFlowNodeInputType } from '@fastgpt/global/core/app/formEdit/utils';
 import type { AppChatConfigType } from '@fastgpt/global/core/app/type';
 import { NodeInputKeyEnum, WorkflowIOValueTypeEnum } from '@fastgpt/global/core/workflow/constants';
@@ -460,7 +461,7 @@ export const filterSensitiveNodesData = (nodes: StoreNodeItemType[]) => {
           input.key === NodeInputKeyEnum.aiSystemPrompt &&
           typeof input.value === 'string'
         ) {
-          input.value = input.value.replace(/\{\{@[^@{}]+@\}\}/g, '');
+          input.value = stripAgentPromptRefs(input.value);
         }
       });
     }
