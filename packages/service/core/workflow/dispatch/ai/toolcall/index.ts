@@ -141,6 +141,7 @@ export const dispatchRunTools = async (props: DispatchToolModuleProps): Promise<
     // 初始化沙盒
     const sandboxClient = useSandbox
       ? await ensureWorkflowSandboxReadyForUse({
+          nodeId,
           workflowStreamResponse: props.workflowStreamResponse,
           sourceType: sandboxSourceType,
           sourceId: sandboxSourceId,
