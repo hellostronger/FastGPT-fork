@@ -311,7 +311,7 @@ describe('POST /api/core/dataset/listV2 - team owner under DISABLE_APIDATASET_SU
         name: 'api-dataset',
         teamId: owner.teamId,
         tmbId: member.tmbId,
-        apiDatasetServer: { apiServer: { baseUrl: 'https://example.com' } }
+        apiDatasetServer: { apiServer: { baseUrl: 'https://example.com' }, permissionSync: true }
       },
       { name: 'ordinary-dataset', teamId: owner.teamId, tmbId: member.tmbId }
     ]);
@@ -359,6 +359,30 @@ describe('POST /api/core/dataset/listV2 - team owner under DISABLE_APIDATASET_SU
     ).toMatchObject({ fileCount: 1, permission: { hasReadPer: true, isOwner: false } });
   });
 
+  it('未开启权限同步的 API 文件库仍走团队 owner 旁路', async () => {
+    setDisableApiDatasetSuperAdmin(true);
+    const { owner, members } = await getFakeUsers(1);
+    const member = members[0];
+    const unmanagedApiDataset = await MongoDataset.create({
+      name: 'unmanaged-api-dataset',
+      teamId: owner.teamId,
+      tmbId: member.tmbId,
+      apiDatasetServer: { apiServer: { baseUrl: 'https://example.com' } }
+    });
+
+    const response = await Call<
+      GetDatasetListV2Body,
+      Record<string, never>,
+      GetDatasetListV2Response
+    >(handler, { auth: owner, body: { parentId: null } });
+
+    expect(response.code).toBe(200);
+    expect(response.data.list.map((item) => String(item._id))).toEqual([
+      String(unmanagedApiDataset._id)
+    ]);
+    expect(response.data.list[0].permission).toMatchObject({ hasReadPer: true, isOwner: true });
+  });
+
   it('API 文件库的 dataset 所有者即使没有 ACL 行也保留可见性和 owner 身份', async () => {
     setDisableApiDatasetSuperAdmin(true);
     const { owner, members } = await getFakeUsers(1);
@@ -368,13 +392,13 @@ describe('POST /api/core/dataset/listV2 - team owner under DISABLE_APIDATASET_SU
         name: 'owned-by-team-owner',
         teamId: owner.teamId,
         tmbId: owner.tmbId,
-        apiDatasetServer: { apiServer: { baseUrl: 'https://example.com' } }
+        apiDatasetServer: { apiServer: { baseUrl: 'https://example.com' }, permissionSync: true }
       },
       {
         name: 'owned-by-member',
         teamId: owner.teamId,
         tmbId: member.tmbId,
-        apiDatasetServer: { apiServer: { baseUrl: 'https://example.com' } }
+        apiDatasetServer: { apiServer: { baseUrl: 'https://example.com' }, permissionSync: true }
       }
     ]);
 

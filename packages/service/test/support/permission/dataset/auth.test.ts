@@ -411,7 +411,7 @@ describe('authDatasetCollection', () => {
       teamId: 'team-a',
       tmbId: 'tmb-other',
       collectionPermissionEnabled: true,
-      apiDatasetServer: { apiServer: { baseUrl: 'https://example.com' } }
+      apiDatasetServer: { apiServer: { baseUrl: 'https://example.com' }, permissionSync: true }
     });
     mockGetCollectionWithDataset.mockResolvedValue({
       _id: collectionId,
@@ -419,7 +419,7 @@ describe('authDatasetCollection', () => {
       datasetId,
       tmbId: 'tmb-other',
       dataset: {
-        apiDatasetServer: { apiServer: { baseUrl: 'https://example.com' } }
+        apiDatasetServer: { apiServer: { baseUrl: 'https://example.com' }, permissionSync: true }
       }
     });
     mockResolveCollectionPermission.mockResolvedValue(ReadRoleVal);
@@ -463,7 +463,7 @@ describe('authDatasetCollection', () => {
       _id: datasetId,
       teamId: 'team-a',
       tmbId: 'tmb-other',
-      apiDatasetServer: { apiServer: { baseUrl: 'https://example.com' } }
+      apiDatasetServer: { apiServer: { baseUrl: 'https://example.com' }, permissionSync: true }
     });
 
     await expect(
@@ -477,13 +477,31 @@ describe('authDatasetCollection', () => {
     expect(result.dataset.permission.isOwner).toBe(true);
   });
 
-  it('只收紧 API 文件库：普通知识库的团队 owner 仍旁路', async () => {
+  it('只收紧托管库：普通知识库与未开权限同步的 API 文件库仍保留旁路', async () => {
     setDisableApiDatasetSuperAdmin(true);
     mockDatasetQuery({ _id: datasetId, teamId: 'team-a', tmbId: 'tmb-other' });
 
-    const result = await authDatasetByTmbId({ tmbId: 'tmb-a', datasetId, per: ReadPermissionVal });
+    const ordinary = await authDatasetByTmbId({
+      tmbId: 'tmb-a',
+      datasetId,
+      per: ReadPermissionVal
+    });
+    expect(ordinary.dataset.permission.isOwner).toBe(true);
 
-    expect(result.dataset.permission.isOwner).toBe(true);
+    // 有 apiDatasetServer 但没开 permissionSync：本地 ACL 仍由站内管理，超管旁路保留
+    mockDatasetQuery({
+      _id: datasetId,
+      teamId: 'team-a',
+      tmbId: 'tmb-other',
+      apiDatasetServer: { apiServer: { baseUrl: 'https://example.com' } }
+    });
+
+    const unmanaged = await authDatasetByTmbId({
+      tmbId: 'tmb-a',
+      datasetId,
+      per: ReadPermissionVal
+    });
+    expect(unmanaged.dataset.permission.isOwner).toBe(true);
   });
 
   it('grants the team owner owner role on a collection owned by another member', async () => {
@@ -620,7 +638,7 @@ describe('authDataset isRoot', () => {
       tmbId: 'owner-tmb',
       inheritPermission: false,
       collectionPermissionEnabled: false,
-      apiDatasetServer: { apiServer: { baseUrl: 'https://example.com' } }
+      apiDatasetServer: { apiServer: { baseUrl: 'https://example.com' }, permissionSync: true }
     });
 
     const result = await authDataset({ req: mockReq, datasetId, per: ReadPermissionVal });

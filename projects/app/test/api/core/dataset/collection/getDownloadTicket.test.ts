@@ -133,7 +133,8 @@ describe('POST /core/dataset/collection/getDownloadTicket', () => {
         name: 'Managed',
         type: DatasetTypeEnum.dataset,
         apiDatasetServer: {
-          apiServer: { baseUrl: 'https://example.com' }
+          apiServer: { baseUrl: 'https://example.com' },
+          permissionSync: true
         }
       },
       teamId: 'team-1',
