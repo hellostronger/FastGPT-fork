@@ -35,11 +35,23 @@ export const sandboxReadFileTool = defineTool({
     }
 
     const content = decodeFileContent(file.content);
+    const contentBytes = Buffer.byteLength(content, 'utf8');
+    const isEmptyContent = content.trim() === '';
     const lines = content.split(/\r\n|\n|\r/);
     const startLine = params.offset ?? 1;
     const startIndex = startLine - 1;
     if (startIndex >= lines.length) {
       throw new Error(`Offset ${startLine} is beyond end of file (${lines.length} lines total)`);
+    }
+
+    // 空文件 / 纯空白内容没有任何可展示的行：返回明确提示，避免上层拿到空串后工具卡片整块空白（TD 2026112400317）
+    if (isEmptyContent) {
+      return {
+        response:
+          contentBytes === 0
+            ? `File is empty (0 bytes): ${params.path}`
+            : `File contains only whitespace (${contentBytes} bytes): ${params.path}`
+      };
     }
 
     const selectedLines =
