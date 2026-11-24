@@ -9,6 +9,7 @@ import { parseLLMStreamResponse } from '../../../utils';
 import { parsePromptToolCall } from '../../promptCall';
 import type { CompleteParams, CompleteResponse, CreateLLMResponseProps } from '../types';
 import { normalizeNativeToolCalls, normalizeToolName } from './normalize';
+import { sanitizeToolArguments } from '@fastgpt/global/core/chat/toolCallArgs';
 import type { AIApiRequestMeta } from '../../../config';
 import { createUserKeyError } from '../createChatCompletion';
 
@@ -47,6 +48,9 @@ export const createStreamResponse = async ({
     }
   }
 
+  /** 用户中断时，累积中的 tool arguments 必然不完整，不能作为已完成结果返回。 */
+  let aborted = false;
+
   /** 统一读取、取消和异常捕获；各模式按原有顺序消费解析后的正文、思考和工具增量。 */
   const consumeStream = async (
     onPart: (data: ReturnType<typeof parsePart>, part: ChatCompletionChunk) => void
@@ -55,6 +59,7 @@ export const createStreamResponse = async ({
       for await (const part of readStream()) {
         if (isAborted?.()) {
           // 用户中断是正常关闭，保留已经收到的内容。
+          aborted = true;
           response.controller?.abort();
           updateFinishReason('close');
           break;
@@ -171,7 +176,15 @@ export const createStreamResponse = async ({
         finish_reason,
         toolCalls: toolCallError
           ? []
-          : normalizeNativeToolCalls({ toolCalls: mergedToolCalls, toolNames })
+          : aborted
+            ? []
+            : normalizeNativeToolCalls({ toolCalls: mergedToolCalls, toolNames }).map((call) => ({
+                ...call,
+                function: {
+                  ...call.function,
+                  arguments: sanitizeToolArguments(call.function.arguments)
+                }
+              }))
       };
     } else {
       let startResponseWrite = false;
@@ -216,11 +229,22 @@ export const createStreamResponse = async ({
       // prompt tool 模式结束后用完整文本解析最终回答和工具调用。
       const { answer: llmAnswer, streamAnswer, toolCalls } = parsePromptToolCall(content);
 
+      // 中断或残缺的 prompt 协议不能产出半截调用；参数统一收敛为合法 JSON。
+      const finalToolCalls = aborted
+        ? undefined
+        : toolCalls?.map((call) => ({
+            ...call,
+            function: {
+              ...call.function,
+              arguments: sanitizeToolArguments(call.function.arguments)
+            }
+          }));
+
       if (streamAnswer) {
         onStreaming?.({ text: streamAnswer });
       }
 
-      toolCalls?.forEach((call) => {
+      finalToolCalls?.forEach((call) => {
         onToolCall?.({ call });
       });
 
@@ -230,7 +254,7 @@ export const createStreamResponse = async ({
         reasoningText: reasoningContent,
         finish_reason,
         usage,
-        toolCalls
+        toolCalls: finalToolCalls
       };
     }
   } else {

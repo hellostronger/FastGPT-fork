@@ -190,7 +190,7 @@ describe('createStreamResponse', () => {
       ['search', 'search', ' \t', '{}'],
       ['functions_search', 'functions_search', '{}', '{}'],
       ['functions', 'functions', '{}', '{}'],
-      ['search', 'search', '{"q":', '{"q":']
+      ['search', 'search', '{"q":', '{"q":null}']
     ])(
       'should preserve %s as %s and arguments %j as %j',
       async (rawName, name, args, finalArgs) => {
@@ -807,7 +807,7 @@ describe('createStreamResponse', () => {
     );
 
     it.each(['abort', 'error'] as const)(
-      'should retain unfinished tool arguments on %s without synthesizing parameters',
+      'should never expose unfinished tool arguments on %s',
       async (termination) => {
         const callbacks = createCallbacks();
         let stopping = false;
@@ -831,7 +831,12 @@ describe('createStreamResponse', () => {
           ...callbacks
         });
 
-        expect(result.toolCalls).toEqual([call]);
+        // 中断时半截 tool call 直接丢弃，绝不作为已完成结果留给落库/回放。
+        expect(result.toolCalls).toEqual(
+          termination === 'abort'
+            ? []
+            : [{ ...call, function: { ...call.function, arguments: '{"q":null}' } }]
+        );
         expect(result.usage).toEqual(usage);
         expect(result.finish_reason).toBe(termination === 'abort' ? 'close' : null);
         expect(result.error).toBe(termination === 'abort' ? undefined : error);

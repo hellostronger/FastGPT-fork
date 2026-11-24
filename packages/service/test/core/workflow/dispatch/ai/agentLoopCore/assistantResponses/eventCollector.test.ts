@@ -368,4 +368,34 @@ describe('createAgentLoopCoreAssistantEventCollector', () => {
       { text: { content: 'After' } }
     ]);
   });
+
+  it('drops streaming partial tool calls when the response is closed by the user', () => {
+    const collector = createAgentLoopCoreAssistantEventCollector();
+    collector.emitEvent({
+      type: 'llm_request_start',
+      responseId: 'close',
+      requestIndex: 1,
+      modelName: 'Model'
+    });
+    collector.emitEvent({ type: 'answer_delta', text: 'thinking' });
+    // 中断前只累积到半截 arguments，工具始终没有执行结果。
+    collector.emitEvent({
+      type: 'tool_call',
+      call: call('partial', 'ask_user', '{"reason":"收集表单数据')
+    });
+    collector.emitEvent({
+      type: 'tool_params',
+      callId: 'partial',
+      argsDelta: '以生成专属HTML文件","blockerType":"missing_required_input"'
+    });
+    collector.emitEvent({ ...end('close'), finishReason: 'close', toolCalls: [] });
+
+    expect(collector.assistantResponses).toHaveLength(1);
+    expect(collector.assistantResponses[0]).toMatchObject({ text: { content: 'thinking' } });
+    expect(collector.assistantResponses[0]).not.toHaveProperty('tools');
+    expect(collector.assistantResponses[0]).not.toHaveProperty('toolCallIds');
+    // 落库结果必须满足 schema，且不包含半截参数。
+    expect(AIChatItemValueSchema.safeParse(collector.assistantResponses[0]).success).toBe(true);
+    expect(JSON.stringify(collector.assistantResponses)).not.toContain('missing_required_input');
+  });
 });

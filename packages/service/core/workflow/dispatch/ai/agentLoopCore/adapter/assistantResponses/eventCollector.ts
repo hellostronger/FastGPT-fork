@@ -159,6 +159,15 @@ export const createAgentLoopCoreAssistantEventCollector = ({
           group.tools = group.toolCallIds.flatMap(
             (id) => group.tools?.filter((tool) => tool.id === id) ?? []
           );
+        } else if (event.finishReason === 'close') {
+          // 用户中断时流式累积的半截 tool call 没有完整参数和执行结果，不能落库回放。
+          if (group.tools?.length) {
+            group.tools = group.tools.filter((tool) => tool.response !== undefined);
+            if (!group.tools.length) {
+              delete group.tools;
+              delete group.toolCallIds;
+            }
+          }
         }
         refreshVisibility(group);
         current = undefined;

@@ -22,6 +22,7 @@ import type {
 } from '../ai/llm/type';
 import { ChatCompletionRequestMessageRoleEnum } from '../../core/ai/constants';
 import { normalizeToolResponseContent } from '../ai/llm/utils';
+import { sanitizeToolArguments, sanitizeToolCallMessages } from './toolCallArgs';
 import { getUserChatSelect, formatUserChatSelect, userChatSelect2RuntimeText } from './input/utils';
 import {
   getWorkflowBuilderPreview,
@@ -367,17 +368,8 @@ export const chats2GPTMessages = ({
   const isNonEmptyString = (value: unknown): value is string =>
     typeof value === 'string' && value.trim().length > 0;
 
-  const normalizeToolArguments = (params: unknown) => {
-    if (typeof params === 'string') {
-      return params || '{}';
-    }
-
-    try {
-      return JSON.stringify(params ?? {});
-    } catch {
-      return '{}';
-    }
-  };
+  /** 历史里可能残留中断产生的半截 arguments，回放前必须保证是合法 JSON。 */
+  const normalizeToolArguments = (params: unknown) => sanitizeToolArguments(params);
 
   type NormalizedChatToolContext = {
     toolCall: ChatCompletionMessageToolCall;
@@ -834,7 +826,8 @@ export const chats2GPTMessages = ({
     }
   });
 
-  return results;
+  // 回放前统一兜底：历史中的半截 tool arguments 会直接导致上游 400，必须在此收敛。
+  return sanitizeToolCallMessages(results);
 };
 
 /**
