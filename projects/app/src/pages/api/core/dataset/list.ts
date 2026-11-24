@@ -58,7 +58,7 @@ async function handler(req: ApiRequestProps): Promise<GetDatasetListResponse> {
     return GetDatasetListResponseSchema.parse([]);
   }
 
-  // 部署开关只收紧 API 文件库：普通知识库仍按团队 owner 旁路，API 文件库改走 ACL 可读范围。
+  // 部署开关只收紧开启权限同步的托管库：其余 API 文件库与普通知识库仍按团队 owner 旁路。
   const teamOwnerFullAccess = teamPer.isOwner && !isSuperAdminBypassDisabled();
 
   const [roleList, myGroupMap, myOrgSet] = await Promise.all([
@@ -91,8 +91,9 @@ async function handler(req: ApiRequestProps): Promise<GetDatasetListResponse> {
     const datasetPerQuery = teamOwnerFullAccess
       ? {}
       : teamPer.isOwner
-        ? // API 文件库按 ACL 收窄，普通知识库保留团队 owner 旁路；dataset.tmbId 是库级鉴权的 owner 兜底。
-          { $or: [{ apiDatasetServer: null }, { tmbId }, idList] }
+        ? // 托管库按 ACL 收窄；未开权限同步的库（含 permissionSync 缺省）保留团队 owner 旁路。
+          // dataset.tmbId 是库级鉴权的 owner 兜底。
+          { $or: [{ 'apiDatasetServer.permissionSync': { $ne: true } }, { tmbId }, idList] }
         : idList;
     const searchMatch = searchKey
       ? {

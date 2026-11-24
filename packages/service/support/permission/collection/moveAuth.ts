@@ -96,7 +96,7 @@ export const authDatasetCollectionMoves = async ({
     getTmbInfoByTmbId({ tmbId })
   ]);
   if (!dataset) throw DatasetErrEnum.unExist;
-  // API 文件库在全局开关要求超管也遵守文件 ACL 时，root 与团队 owner 的旁路同时关闭。
+  // 托管库（permissionSync）在全局开关要求超管也遵守文件 ACL 时，root 与团队 owner 的旁路同时关闭。
   const disableSuperAdmin = isDisableSuperAdmin(dataset.apiDatasetServer);
   const effectiveIsRoot = isRoot && !disableSuperAdmin;
   const permissionSync = isPermissionSyncDataset(dataset.apiDatasetServer);

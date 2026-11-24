@@ -222,7 +222,7 @@ describe('export dataset respects collection permission', () => {
       name: 'disable-super-admin-dataset',
       owner: member,
       collectionPermissionEnabled: true,
-      apiDatasetServer: { apiServer: { baseUrl: 'https://example.com' } }
+      apiDatasetServer: { apiServer: { baseUrl: 'https://example.com' }, permissionSync: true }
     });
     // 导出要求 dataset write，disableSuperAdmin 又关掉了团队 owner 旁路，必须显式授予。
     await grantDataset({
