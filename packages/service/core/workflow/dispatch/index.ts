@@ -1120,7 +1120,9 @@ export class WorkflowQueue {
           onWorkflowNodeStart({
             isRootRuntime: this.isRootRuntime,
             mode,
-            appId: String(this.data.runningAppInfo.sourceId)
+            appId: String(this.data.runningAppInfo.sourceId),
+            nodeId: node.nodeId,
+            nodeName: node.name
           });
           return withActiveSpan(
             {
