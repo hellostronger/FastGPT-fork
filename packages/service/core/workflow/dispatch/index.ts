@@ -858,8 +858,11 @@ export class WorkflowQueue {
       // Langfuse 兜底用量必须归属到“本次节点执行”：队列默认允许 10 个节点并发，
       // 共享的 chatNodeUsages 会混入并发节点的 usage，不能按共享列表做切片。
       const nodeUsage = { inputTokens: 0, outputTokens: 0 };
+      // `isPublicShare` 只在 true 时挂载：`...this.data` 会把 false/undefined 也作为键
+      // 带进节点入参，破坏「节点参数精确键集」的约定（入口隔离测试会校验）。
+      const { isPublicShare, ...dispatchBaseData } = this.data;
       const dispatchData: ModuleDispatchProps<Record<string, any>> = {
-        ...this.data,
+        ...dispatchBaseData,
         memoryState: this.memoryState,
         usagePush: (usages) => {
           usages.forEach((item) => {
@@ -874,9 +877,8 @@ export class WorkflowQueue {
           : undefined,
         histories: this.data.histories,
         retainDatasetCite: this.data.retainDatasetCite,
-        // 仅在公开上下文时挂载：节点入参对象保持精确键集，`undefined` 不能以键的形式
-        // 出现在节点参数里（入口隔离测试会校验）。1.6.x 无 queue.ts，节点入参在此组装。
-        ...(this.data.isPublicShare === true ? { isPublicShare: true } : {}),
+        // 仅在公开上下文时挂载：`undefined`/`false` 不能以键的形式出现在节点参数里。
+        ...(isPublicShare === true ? { isPublicShare: true } : {}),
         node,
         runtimeNodes: this.data.runtimeNodes,
         runtimeNodesMap: this.runtimeNodesMap,
