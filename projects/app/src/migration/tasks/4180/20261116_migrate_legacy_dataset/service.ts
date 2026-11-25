@@ -187,8 +187,7 @@ export const migrateDatasetFieldBatch = async (rows: DatasetFieldRow[]): Promise
     const existing = row.sangforFileParseConfig ?? {};
     const keepHeaderFooter =
       toBoolean(row.keep_header_footer) ?? toBoolean(existing.keep_header_footer) ?? false;
-    const keepAppendix =
-      toBoolean(row.keep_appendix) ?? toBoolean(existing.keep_appendix) ?? true;
+    const keepAppendix = toBoolean(row.keep_appendix) ?? toBoolean(existing.keep_appendix) ?? true;
     const imageAnalysis =
       toBoolean(row.image_analysis) ?? toBoolean(existing.image_analysis) ?? false;
     const chartAnalysis =
@@ -330,7 +329,9 @@ export const migrateDatasetSynonyms = async (): Promise<SynonymMigrationStats> =
 
       const operations = mappings.map((mapping, index) => {
         const mappingId = mappingIds[index]!;
-        const item = normalizedByTerm.get(normalizeSynonymTerm(sourceMappings[index]!.standardizedTerm));
+        const item = normalizedByTerm.get(
+          normalizeSynonymTerm(sourceMappings[index]!.standardizedTerm)
+        );
         if (!item) throw new Error(`normalized synonym mapping missing: ${String(mappingId)}`);
 
         const createTime =
@@ -400,6 +401,11 @@ export type LegacySynonymDataMigrationStats = {
   datasCleaned: number;
 };
 
+type SynonymDataMigrationContext = {
+  assertActive: () => Promise<void>;
+  signal: AbortSignal;
+};
+
 /**
  * 迁移 150 同义词标准化留下的 dataset_datas 状态：
  * 1) 150 没有 synonymVersion，迁移后的配置统一为 version=1；对未标记版本的数据回填 1，
@@ -409,28 +415,93 @@ export type LegacySynonymDataMigrationStats = {
  * synonymRebuildingVersion 是 160 重建任务的领取标记，150 没有该字段，这里不回填。
  * 用 fileId 识别从 150 迁移过来的配置（160 新建配置不写该字段），并限定 version=1，
  * 避免重复执行时覆盖升级后已经推进的词表版本。
+ *
+ * 数据量大的环境里单条 updateMany 可能扫描/写入几十万文档，超过 Mongo 驱动 60s
+ * socketTimeoutMS；这里把匹配条件下推到 find，按 _id 分页提交，并对超时/网络/写冲突做批级重试。
  */
-export const migrateLegacySynonymData = async (): Promise<LegacySynonymDataMigrationStats> => {
+export const migrateLegacySynonymData = async (
+  context?: SynonymDataMigrationContext
+): Promise<LegacySynonymDataMigrationStats> => {
+  const BATCH_SIZE = 1000;
+  const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  /** 驱动 socketTimeoutMS=60s；超时、网络抖动、WriteConflict 都按瞬态错误重试。 */
+  const isTransientError = (error: unknown) => {
+    const message = error instanceof Error ? error.message : String(error);
+    return /timeout|writeconflict|transienttransactionerror|connection|network/i.test(message);
+  };
+  const withRetry = async <T>(run: () => Promise<T>, attempts = 3): Promise<T> => {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < attempts; attempt += 1) {
+      try {
+        return await run();
+      } catch (error) {
+        lastError = error;
+        if (attempt === attempts - 1 || !isTransientError(error)) throw error;
+        await sleep(1000 * (attempt + 1));
+      }
+    }
+    throw lastError;
+  };
+  const assertActive = async () => {
+    context?.signal.throwIfAborted();
+    await context?.assertActive();
+  };
+  /** 按 _id 升序分页遍历文档，把长任务拆成多个短命令，避免触发 socket 超时。 */
+  const forEachIdPage = async (
+    filter: Parameters<typeof MongoDatasetData.collection.find>[0],
+    handler: (ids: Types.ObjectId[]) => Promise<void>
+  ) => {
+    let lastId: Types.ObjectId | undefined;
+    while (true) {
+      await assertActive();
+      const pageFilter = lastId ? ({ ...filter, _id: { $gt: lastId } } as typeof filter) : filter;
+      const rows = (await withRetry(() =>
+        MongoDatasetData.collection
+          .find(pageFilter, { projection: { _id: 1 } })
+          .sort({ _id: 1 })
+          .limit(BATCH_SIZE)
+          .toArray()
+      )) as unknown as Array<{ _id: Types.ObjectId }>;
+
+      if (rows.length === 0) return;
+
+      await assertActive();
+      await handler(rows.map((row) => row._id));
+      lastId = rows[rows.length - 1]!._id;
+    }
+  };
+
   // 150 的 datasets 一定有 synonymFiles 字段（数组默认 []），160 新建知识库没有；
   // 全新 160 环境据此跳过 dataset_datas 全表扫描，避免启动迁移产生额外耗时。
-  const [legacyDataset, legacyConfig] = await Promise.all([
-    MongoDataset.collection.findOne({ synonymFiles: { $exists: true } }, { projection: { _id: 1 } }),
-    MongoDatasetSynonym.collection.findOne({ fileId: { $exists: true } }, { projection: { _id: 1 } })
-  ]);
+  const [legacyDataset, legacyConfig] = await withRetry(() =>
+    Promise.all([
+      MongoDataset.collection.findOne(
+        { synonymFiles: { $exists: true } },
+        { projection: { _id: 1 } }
+      ),
+      MongoDatasetSynonym.collection.findOne(
+        { fileId: { $exists: true } },
+        { projection: { _id: 1 } }
+      )
+    ])
+  );
   if (!legacyDataset && !legacyConfig) {
     return { datasetsUpdated: 0, datasVersioned: 0, datasCleaned: 0 };
   }
 
-  const configs = (await MongoDatasetSynonym.collection
-    .find(
-      {
-        schemaVersion: DatasetSynonymSchemaVersion,
-        version: 1,
-        fileId: { $exists: true }
-      },
-      { projection: { teamId: 1, datasetId: 1 } }
-    )
-    .toArray()) as unknown as Array<{ teamId?: unknown; datasetId?: unknown }>;
+  const configs = (await withRetry(() =>
+    MongoDatasetSynonym.collection
+      .find(
+        {
+          schemaVersion: DatasetSynonymSchemaVersion,
+          version: 1,
+          fileId: { $exists: true }
+        },
+        { projection: { teamId: 1, datasetId: 1 } }
+      )
+      .toArray()
+  )) as unknown as Array<{ teamId?: unknown; datasetId?: unknown }>;
 
   let datasetsUpdated = 0;
   let datasVersioned = 0;
@@ -439,24 +510,40 @@ export const migrateLegacySynonymData = async (): Promise<LegacySynonymDataMigra
     const datasetId = toObjectId(config.datasetId);
     if (!teamId || !datasetId) continue;
 
-    const result = await MongoDatasetData.collection.updateMany(
-      { teamId, datasetId, synonymVersion: { $exists: false } },
-      { $set: { synonymVersion: 1 } }
-    );
+    await forEachIdPage({ teamId, datasetId, synonymVersion: { $exists: false } }, async (ids) => {
+      const result = await withRetry(() =>
+        MongoDatasetData.collection.updateMany(
+          { _id: { $in: ids }, teamId, datasetId, synonymVersion: { $exists: false } },
+          { $set: { synonymVersion: 1 } }
+        )
+      );
+      datasVersioned += result.modifiedCount;
+    });
     datasetsUpdated += 1;
-    datasVersioned += result.modifiedCount;
   }
 
-  const cleaned = await MongoDatasetData.collection.updateMany(
+  let datasCleaned = 0;
+  await forEachIdPage(
     {
       $or: [{ synonymFileIds: { $exists: true } }, { synonymProcessing: { $exists: true } }]
     },
-    { $unset: { synonymFileIds: '', synonymProcessing: '' } }
+    async (ids) => {
+      const result = await withRetry(() =>
+        MongoDatasetData.collection.updateMany(
+          {
+            _id: { $in: ids },
+            $or: [{ synonymFileIds: { $exists: true } }, { synonymProcessing: { $exists: true } }]
+          },
+          { $unset: { synonymFileIds: '', synonymProcessing: '' } }
+        )
+      );
+      datasCleaned += result.modifiedCount;
+    }
   );
 
   return {
     datasetsUpdated,
     datasVersioned,
-    datasCleaned: cleaned.modifiedCount
+    datasCleaned
   };
 };

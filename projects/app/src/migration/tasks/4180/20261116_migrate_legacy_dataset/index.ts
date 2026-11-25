@@ -121,7 +121,7 @@ export const migrateLegacyDataset = async (
     status: SystemMigrationStatusEnum.running
   });
   await context.assertActive();
-  const synonymDataStats = await migrateLegacySynonymData();
+  const synonymDataStats = await migrateLegacySynonymData(context);
   await context.reportProgress({
     key: 'synonymData',
     status: SystemMigrationStatusEnum.succeeded,
