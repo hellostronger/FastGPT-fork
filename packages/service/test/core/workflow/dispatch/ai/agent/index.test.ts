@@ -51,6 +51,22 @@ const runWithLocale = <T>(
     fn
   );
 
+/**
+ * 1.6.x 测试文件以动态 import 获取被测入口，并显式建立 workflow 上下文；
+ * 上游 PR 新增用例直接引用该名字，这里补一个同语义的顶层封装。
+ */
+const dispatchRunAgent = async (
+  props: Parameters<
+    typeof import('@fastgpt/service/core/workflow/dispatch/ai/agent').dispatchRunAgent
+  >[0]
+) =>
+  runWithContext({ mcpClientMemory: {} }, async () => {
+    const { dispatchRunAgent: run } = await import(
+      '@fastgpt/service/core/workflow/dispatch/ai/agent'
+    );
+    return run(props);
+  });
+
 const {
   runAgentLoopMock,
   serviceEnvMock,
