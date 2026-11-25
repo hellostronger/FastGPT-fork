@@ -1,7 +1,10 @@
 import { ChatSourceTypeEnum } from '@fastgpt/global/core/chat/constants';
+import { UserError } from '@fastgpt/global/common/error/utils';
 import { getRunningSandboxId } from '@fastgpt/service/core/ai/sandbox/utils/id';
+import { createAgentSandboxLimitReachedError } from '@fastgpt/service/core/ai/sandbox/error';
 import { ensureWorkflowSandboxReadyForUse } from '@fastgpt/service/core/workflow/dispatch/ai/sandbox';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { ConnectionError, SandboxTerminationError } from '@fastgpt-sdk/sandbox-adapter';
 
 const { ensureAppSandboxRuntimeReadyMock, markChatSandboxEnabledMock } = vi.hoisted(() => ({
   ensureAppSandboxRuntimeReadyMock: vi.fn(),
@@ -112,29 +115,83 @@ describe('ensureWorkflowSandboxReadyForUse', () => {
     ]);
   });
 
-  it.each(['configuration', 'runtime'])(
-    'does not report readiness after %s fails',
-    async (stage) => {
-      const error = new Error(`${stage} failed`);
-      const workflowStreamResponse = vi.fn();
-      const prepareRuntime = vi.fn(async () => undefined);
-      if (stage === 'configuration') {
-        ensureAppSandboxRuntimeReadyMock.mockRejectedValueOnce(error);
-      } else {
-        prepareRuntime.mockRejectedValueOnce(error);
-      }
-
-      await expect(
-        ensureWorkflowSandboxReadyForUse({ ...source, workflowStreamResponse, prepareRuntime })
-      ).rejects.toBe(error);
-
-      expect(workflowStreamResponse.mock.calls.map(([event]) => event.data.phase)).toEqual([
-        'lazyInit'
-      ]);
-      expect(prepareRuntime).toHaveBeenCalledTimes(stage === 'configuration' ? 0 : 1);
-      expect(markChatSandboxEnabledMock).not.toHaveBeenCalled();
+  it.each([
+    ['configuration', 'upgrade'],
+    ['runtime', 'prepare']
+  ] as const)('reports failed phase with reason after %s fails', async (stage, step) => {
+    const error = new Error(`${stage} failed`);
+    const workflowStreamResponse = vi.fn();
+    const prepareRuntime = vi.fn(async () => undefined);
+    if (stage === 'configuration') {
+      ensureAppSandboxRuntimeReadyMock.mockRejectedValueOnce(error);
+    } else {
+      prepareRuntime.mockRejectedValueOnce(error);
     }
-  );
+
+    await expect(
+      ensureWorkflowSandboxReadyForUse({ ...source, workflowStreamResponse, prepareRuntime })
+    ).rejects.toBe(error);
+
+    // 失败必须先上报 failed（原因 + 环节）再抛出，前端据此展示具体原因与重试入口。
+    expect(workflowStreamResponse.mock.calls.map(([event]) => event.data)).toEqual([
+      { sandboxId, phase: 'lazyInit' },
+      { sandboxId, phase: 'failed', message: `${stage} failed`, step }
+    ]);
+    expect(prepareRuntime).toHaveBeenCalledTimes(stage === 'configuration' ? 0 : 1);
+    expect(markChatSandboxEnabledMock).not.toHaveBeenCalled();
+  });
+
+  it('forwards business error i18n keys so the client can translate them', async () => {
+    const workflowStreamResponse = vi.fn();
+    const prepareRuntime = vi.fn(async () => {
+      throw createAgentSandboxLimitReachedError();
+    });
+
+    await expect(
+      ensureWorkflowSandboxReadyForUse({ ...source, workflowStreamResponse, prepareRuntime })
+    ).rejects.toBeInstanceOf(UserError);
+
+    const failed = workflowStreamResponse.mock.calls
+      .map(([event]) => event.data)
+      .find((data) => data.phase === 'failed');
+
+    // 业务错误命中 ERROR_RESPONSE，getErrText 返回的是 i18n key 而非文案；
+    // 服务端保持这个约定，最终展示由前端 translateSandboxFailureMessage 按当前语言翻译
+    // （见 projects/app 的 sandboxStatus.test.ts 用例）。
+    expect(failed).toMatchObject({ sandboxId, phase: 'failed', step: 'prepare' });
+    expect(failed?.message).toBe('common:code_error.sandbox_error.agent_sandbox_limit_reached');
+  });
+
+  it('reports the provider display reason instead of the generic wrapper text', async () => {
+    // 真实适配器边界：外层是通用 ConnectionError，provider 证据在 cause 链。
+    const error = new ConnectionError(
+      'Failed to create sandbox',
+      'http://opensandbox.local',
+      new SandboxTerminationError(
+        'KUBERNETES::POD_FAILED',
+        'primary reason=ContainerFailed; container sandbox exited with code 127 (pod sample-pod-7f9c)'
+      )
+    );
+    ensureAppSandboxRuntimeReadyMock.mockRejectedValueOnce(error);
+    const workflowStreamResponse = vi.fn();
+
+    await expect(
+      ensureWorkflowSandboxReadyForUse({
+        ...source,
+        workflowStreamResponse,
+        prepareRuntime: async () => undefined
+      })
+    ).rejects.toBe(error);
+
+    const failed = workflowStreamResponse.mock.calls
+      .map(([event]) => event.data)
+      .find((data) => data.phase === 'failed');
+    expect(failed).toMatchObject({ sandboxId, phase: 'failed', step: 'upgrade' });
+    expect(failed?.message).toContain('ContainerFailed');
+    expect(failed?.message).toContain('sample-pod-7f9c');
+    expect(failed?.message).not.toBe('Failed to create sandbox');
+    expect(failed?.message).not.toContain('\n');
+  });
 
   it('prepares the runtime without a stream callback', async () => {
     const prepareRuntime = vi.fn(async () => 'runtime');

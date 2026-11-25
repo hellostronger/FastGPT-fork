@@ -14,6 +14,7 @@ import {
   type OnOpenCiteModalProps
 } from '@/web/core/chat/context/chatItemContext';
 import { addStatisticalDataToHistoryItem } from '@/global/core/chat/utils';
+import { findFailedResponseNode } from '@fastgpt/global/core/chat/utils';
 import { useMemoizedFn } from 'ahooks';
 import { useMemoEnhance } from '@fastgpt/web/hooks/useMemoEnhance';
 import { useSystem } from '@fastgpt/web/hooks/useSystem';
@@ -25,6 +26,7 @@ import { shouldFilterAiValue } from './AIChatBubble/utils';
 import { getAIChatDisplayGroups } from '../utils/agentAsk';
 import ChatErrorCard from './ChatErrorCard';
 import { shouldShowChatItemInlineError } from '../utils/error';
+import { resolveChatItemErrorContent } from '../utils/sandboxStatus';
 import { toChatAuthApiTarget } from '@/web/core/chat/utils';
 import { ChatBoxContentMaxWidth } from '../constants';
 import MyTooltip from '@fastgpt/web/components/common/MyTooltip';
@@ -105,17 +107,23 @@ const ChatItem = (props: Props) => {
     return new Set(sourceQuoteList.map((item) => item.id).filter((id): id is string => !!id));
   }, [statisticalChatItem.totalQuoteList]);
   const { errorText } = statisticalChatItem;
+  // 最终失败节点身份：用于判断沙箱失败是否已被后续节点错误取代，避免消息级覆盖。
+  const failedNodeId = useMemoEnhance(() => {
+    const responseData =
+      statisticalChatItem.obj === ChatRoleEnum.AI ? statisticalChatItem.responseData : undefined;
+    return findFailedResponseNode(responseData)?.nodeId;
+  }, [statisticalChatItem]);
   const inlineErrorInfo = useMemo(() => {
-    if (!chat.errorMsg && !errorText) return;
-
-    const moduleName = errorText?.moduleName || chat.moduleName;
-    const errorPrefix = t('chat:log.error.error_prefix');
-
-    return {
-      title: moduleName ? `${errorPrefix} - ${t(moduleName)}` : errorPrefix,
-      message: t(errorText?.errorText || chat.errorMsg || 'Unknow error')
-    };
-  }, [chat.errorMsg, chat.moduleName, errorText, t]);
+    return resolveChatItemErrorContent({
+      errorMsg: chat.errorMsg,
+      errorText,
+      moduleName: chat.moduleName,
+      sandboxError: chat.sandboxError,
+      failedNodeId,
+      logErrorPrefix: t('chat:log.error.error_prefix'),
+      t
+    });
+  }, [chat.errorMsg, chat.moduleName, chat.sandboxError, errorText, failedNodeId, t]);
   const showInlineError = shouldShowChatItemInlineError({
     hasInlineError: !!inlineErrorInfo,
     isChatting,
@@ -255,7 +263,11 @@ const ChatItem = (props: Props) => {
               {/* error message */}
               {showInlineError && inlineErrorInfo && (
                 <Box mt={4}>
-                  <ChatErrorCard title={inlineErrorInfo.title} message={inlineErrorInfo.message} />
+                  <ChatErrorCard
+                    title={inlineErrorInfo.title}
+                    message={inlineErrorInfo.message}
+                    secondary={inlineErrorInfo.secondary}
+                  />
                 </Box>
               )}
               {children}

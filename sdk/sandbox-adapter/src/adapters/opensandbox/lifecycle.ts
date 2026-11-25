@@ -13,7 +13,10 @@ import {
   ConnectionError,
   FeatureNotSupportedError,
   SandboxNotFoundError,
-  SandboxStateError
+  SandboxStateError,
+  SandboxTerminationError,
+  getSandboxFailureDetail,
+  type SandboxFailureDetail
 } from '../../errors';
 import type {
   ResourceLimits,
@@ -51,6 +54,31 @@ const STATE_MAP: Record<string, SandboxState> = {
   error: 'Error',
   paused: 'Stopped',
   deleted: 'UnExist'
+};
+
+/**
+ * provider status 上的结构化失败码。
+ *
+ * 只读 provider 的 machine-readable 字段（`code` / `reason`），绝不从 message 文本
+ * 反推码；message 只作为可展示原因的来源。
+ */
+const readStatusFailureCode = (status: SandboxStatus): string | undefined => {
+  const record = status as unknown as Record<string, unknown>;
+  if (typeof record.code === 'string') return record.code;
+  return status.reason;
+};
+
+/** 把 provider status 的失败信息收敛为 SDK 失败契约；未知状态返回 undefined。 */
+const resolveStatusFailure = (status: SandboxStatus): SandboxFailureDetail | undefined => {
+  const code = readStatusFailureCode(status);
+  if (!code) return undefined;
+  return getSandboxFailureDetail({ code, reason: status.reason, message: status.message });
+};
+
+/** 读取异常链里 provider 已明确终止的结构化证据；未知结果返回 undefined。 */
+const resolveTerminationFailure = (error: unknown): SandboxFailureDetail | undefined => {
+  const detail = getSandboxFailureDetail(error);
+  return detail?.terminated ? detail : undefined;
 };
 
 /** Owns the OpenSandbox SDK client and all remote lifecycle transitions. */
@@ -98,8 +126,11 @@ export class OpenSandboxLifecycle {
   }
 
   private mapStatus(status: { state: string; reason?: string; message?: string }): SandboxStatus {
+    const record = status as unknown as Record<string, unknown>;
     return {
       state: STATE_MAP[status.state.toLowerCase()] ?? 'Error',
+      // provider 原始失败码随 status 透传，供恢复入口读取结构化证据。
+      code: typeof record.code === 'string' ? record.code : undefined,
       reason: status.reason,
       message: status.message
     };
@@ -247,8 +278,16 @@ export class OpenSandboxLifecycle {
       this.setStatus(resolved.status);
       if (props.expectedStates.includes(currentState)) return resolved;
       if (currentState === 'Error') {
+        const failure = resolveStatusFailure(resolved.status);
+        if (failure?.terminated) {
+          // 对外 message 直接使用 provider 的可展示原因。
+          throw new SandboxTerminationError(failure.code, failure.displayMessage, {
+            message: failure.displayMessage
+          });
+        }
+        const detail = resolved.status.message ?? 'unknown error';
         throw new ConnectionError(
-          `Sandbox ${props.sandboxId} entered an error state: ${resolved.status.message ?? 'unknown error'}`,
+          `Sandbox ${props.sandboxId} entered an error state: ${detail}`,
           this.connectionConfig.baseUrl
         );
       }
@@ -323,11 +362,16 @@ export class OpenSandboxLifecycle {
         });
         await this.releaseSandbox();
         return this.create();
-      case 'Error':
-        throw new ConnectionError(
-          `Sandbox error: ${props.resolved.status.message ?? 'unknown error'}`,
-          this.connectionConfig.baseUrl
-        );
+      case 'Error': {
+        const failure = resolveStatusFailure(props.resolved.status);
+        if (failure?.terminated) {
+          throw new SandboxTerminationError(failure.code, failure.displayMessage, {
+            message: failure.displayMessage
+          });
+        }
+        const detail = props.resolved.status.message ?? 'unknown error';
+        throw new ConnectionError(`Sandbox error: ${detail}`, this.connectionConfig.baseUrl);
+      }
     }
   }
 
@@ -434,6 +478,14 @@ export class OpenSandboxLifecycle {
       this.setStatus({ state: 'Running' });
     } catch (error) {
       this.setStatus({ state: 'Error', message: String(error) });
+      // provider 的真实终止原因在结构化字段/cause 链；对外 message 直接使用可展示原因。
+      const failure = resolveTerminationFailure(error);
+      if (failure) {
+        throw new SandboxTerminationError(failure.code, failure.displayMessage, {
+          message: failure.displayMessage,
+          cause: error
+        });
+      }
       throw new ConnectionError('Failed to create sandbox', this.connectionConfig.baseUrl, error);
     }
   }

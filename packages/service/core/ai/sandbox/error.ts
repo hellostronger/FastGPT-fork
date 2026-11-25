@@ -5,6 +5,7 @@
  */
 import { SandboxErrEnum } from '@fastgpt/global/common/error/code/sandbox';
 import { getErrText, UserError } from '@fastgpt/global/common/error/utils';
+import { getSandboxFailureDetail } from '@fastgpt-sdk/sandbox-adapter';
 
 /** 表示 keepalive 等禁止创建的路径没有可继续使用的 running sandbox。 */
 export class SandboxRuntimeNotRunningError extends Error {
@@ -34,7 +35,10 @@ export const createAgentSandboxInitializingError = () =>
 
 /** 将底层迁移异常转换为可展示且经过敏感信息替换的用户错误。 */
 export const createSandboxRuntimeUpgradeFailedError = (error: unknown) =>
-  new UserError(getErrText(error, SandboxErrEnum.runtimeUpgradeFailed));
+  new UserError(getErrText(error, SandboxErrEnum.runtimeUpgradeFailed), undefined, {
+    // 保留原始 cause，让上层仍能按 SDK 失败契约读取结构化终止原因。
+    cause: error
+  });
 
 /**
  * 生成沙箱活跃实例系统总上限拒绝错误。
@@ -47,3 +51,13 @@ export const createAgentSandboxLimitReachedError = () =>
 /** 生成团队沙箱配额拒绝错误：当前团队的活跃沙箱实例已达配额上限。 */
 export const createAgentSandboxTeamLimitReachedError = () =>
   new UserError(SandboxErrEnum.agentSandboxTeamLimitReached);
+
+/**
+ * 判定“远端已明确结束”的沙箱失败（容器非 0 退出、配额拒绝等）。
+ *
+ * 结构化取证与 cause 链遍历都收敛在 SDK 的失败契约里（`getSandboxFailureDetail`），
+ * service 只消费结论，不再维护文本特征表或复制遍历逻辑。超时/网络错误等未知结果
+ * 由契约返回 `terminated: false`，重试语义仍保持原隔离窗口。
+ */
+export const isSettledSandboxFailure = (error: unknown): boolean =>
+  Boolean(getSandboxFailureDetail(error)?.terminated);

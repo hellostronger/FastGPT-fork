@@ -12,6 +12,15 @@ import {
   SandboxOperationConflictError
 } from '@fastgpt/service/core/ai/sandbox/application/lifecycle/error';
 import { canResumeSandboxOperation } from '@fastgpt/service/core/ai/sandbox/application/lifecycle/utils';
+import { SANDBOX_OPERATION_ISOLATION_MS } from '@fastgpt/service/core/ai/sandbox/constants';
+import { ConnectionError, SandboxTerminationError } from '@fastgpt-sdk/sandbox-adapter';
+
+/** 只包一层可观测 spy，行为仍委托真实 SDK 契约，用于断言“只判定一次”。 */
+const sdkMocks = vi.hoisted(() => ({ getSandboxFailureDetail: vi.fn() }));
+vi.mock('@fastgpt-sdk/sandbox-adapter', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@fastgpt-sdk/sandbox-adapter')>();
+  return { ...actual, getSandboxFailureDetail: sdkMocks.getSandboxFailureDetail };
+});
 
 const sandboxId = 'runner-contract-test';
 const lease = { signal: new AbortController().signal, assertValid: vi.fn() };
@@ -42,6 +51,11 @@ beforeAll(async () => {
 });
 beforeEach(async () => {
   vi.restoreAllMocks();
+  const actual = await vi.importActual<typeof import('@fastgpt-sdk/sandbox-adapter')>(
+    '@fastgpt-sdk/sandbox-adapter'
+  );
+  sdkMocks.getSandboxFailureDetail.mockReset();
+  sdkMocks.getSandboxFailureDetail.mockImplementation(actual.getSandboxFailureDetail);
   lease.assertValid.mockReset();
   await MongoSandboxInstance.deleteMany({ sandboxId });
 });
@@ -100,6 +114,59 @@ describe('runSandboxLifecycleOperation', () => {
     expect(failed.operation?.error).toBe(error.message);
     expect(canResumeSandboxOperation(failed)).toBe(settled);
     expect(failed.operation?.retryAfter).toBeInstanceOf(Date);
+  });
+
+  it('settles structured termination evidence and allows immediate retry', async () => {
+    const resource = await create();
+    // 真实包装形态：provider 终止原因在 cause 链，外层是通用 ConnectionError。
+    const error = new ConnectionError(
+      'Failed to create sandbox',
+      'http://opensandbox.local',
+      new SandboxTerminationError(
+        'KUBERNETES::POD_FAILED',
+        'primary reason=ContainerFailed; container sandbox exited with code 127 (Error)'
+      )
+    );
+    await expect(
+      runSandboxLifecycleOperation({
+        resource,
+        lease,
+        definition: definition(async () => {
+          throw error;
+        })
+      })
+    ).rejects.toBe(error);
+
+    const failed = (await read())!;
+    expect(failed.operation?.retryAfter).toBeInstanceOf(Date);
+    expect(failed.operation!.retryAfter!.getTime() - Date.now()).toBeLessThanOrEqual(1_000);
+    expect(canResumeSandboxOperation(failed)).toBe(true);
+    // 只在本层判定一次，不重复遍历 cause 链。
+    expect(sdkMocks.getSandboxFailureDetail).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps unknown results in the isolation window without settling the failure', async () => {
+    const resource = await create();
+    const error = new ConnectionError(
+      'Failed to create sandbox',
+      'http://opensandbox.local',
+      new Error('KUBERNETES::POD_READY_TIMEOUT: sandbox did not become ready')
+    );
+    await expect(
+      runSandboxLifecycleOperation({
+        resource,
+        lease,
+        definition: definition(async () => {
+          throw error;
+        })
+      })
+    ).rejects.toBe(error);
+
+    const failed = (await read())!;
+    const retryDelta = failed.operation!.retryAfter!.getTime() - Date.now();
+    expect(retryDelta).toBeGreaterThanOrEqual(SANDBOX_OPERATION_ISOLATION_MS.stop - 1_000);
+    expect(retryDelta).toBeLessThanOrEqual(SANDBOX_OPERATION_ISOLATION_MS.stop);
+    expect(canResumeSandboxOperation(failed)).toBe(false);
   });
 
   it('resumes checkpoints without repeating prior steps and clears failure metadata', async () => {

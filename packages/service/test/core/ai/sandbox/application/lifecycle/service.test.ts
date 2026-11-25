@@ -101,6 +101,7 @@ const makeResourceDoc = (params: {
   phase?: string;
   heartbeatAt?: Date;
   retryAfter?: Date;
+  error?: string;
 }) =>
   ({
     sandboxId,
@@ -121,7 +122,8 @@ const makeResourceDoc = (params: {
       previousStatus: (params.status ?? 'restoring') === 'restoring' ? 'archived' : 'stopped',
       startedAt: new Date(0),
       heartbeatAt: params.heartbeatAt ?? new Date(0),
-      retryAfter: params.retryAfter
+      retryAfter: params.retryAfter,
+      error: params.error
     }
   }) as repository.SandboxResourceDoc;
 const read = () => repository.findSandboxInstanceBySandboxId({ sandboxId });
@@ -166,6 +168,71 @@ describe('isSandboxActivationRecoverable / isSandboxActivationRollback', () => {
     });
     expect(isSandboxActivationRecoverable(resource, now)).toBe(false);
     expect(isSandboxActivationRecoverable(resource, new Date(now.getTime() + 1))).toBe(true);
+  });
+  it('遵守 retryAfter：终止失败由 runner 写为 now，自然立即恢复', () => {
+    // 新链路：provider 边界判定终止后 runner 写入 retryAfter=now，恢复侧不再二次分类。
+    expect(
+      isSandboxActivationRecoverable(
+        makeResourceDoc({
+          status: 'provisioning',
+          heartbeatAt: now,
+          retryAfter: now,
+          error: 'Failed to create sandbox'
+        }),
+        now
+      )
+    ).toBe(true);
+  });
+  it('缺失 retryAfter 时按 heartbeat 隔离窗口处理，不从错误文本提前恢复', () => {
+    const retryAfter = new Date(now.getTime() + 5 * 60 * 1000);
+    // 没有 retryAfter 的记录只能等待完整隔离窗口，绝不从文本特征猜终止。
+    expect(
+      isSandboxActivationRecoverable(
+        makeResourceDoc({
+          status: 'provisioning',
+          heartbeatAt: now,
+          retryAfter,
+          error: 'container sandbox exited with code 127 (Error)'
+        }),
+        now
+      )
+    ).toBe(false);
+    expect(
+      isSandboxActivationRecoverable(
+        makeResourceDoc({
+          status: 'provisioning',
+          heartbeatAt: now,
+          retryAfter,
+          error: 'sandbox request timeout'
+        }),
+        now
+      )
+    ).toBe(false);
+  });
+  it('只按 retryAfter 决定是否放行', () => {
+    const retryAfter = new Date(now.getTime() + 5 * 60 * 1000);
+    expect(
+      isSandboxActivationRecoverable(
+        makeResourceDoc({
+          status: 'provisioning',
+          heartbeatAt: now,
+          retryAfter,
+          error: 'Failed to create sandbox'
+        }),
+        now
+      )
+    ).toBe(false);
+    expect(
+      isSandboxActivationRecoverable(
+        makeResourceDoc({
+          status: 'provisioning',
+          heartbeatAt: now,
+          retryAfter,
+          error: 'container sandbox exited with code 127 (Error)'
+        }),
+        now
+      )
+    ).toBe(false);
   });
   it('keeps recent errors isolated without acquiring lease', async () => {
     const resource = await createResource({ status: 'provisioning', heartbeatAt: now });

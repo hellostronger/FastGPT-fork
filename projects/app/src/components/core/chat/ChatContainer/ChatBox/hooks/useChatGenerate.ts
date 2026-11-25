@@ -37,6 +37,11 @@ import {
   rewriteHistoriesByInteractiveResponse
 } from '../utils/interactive';
 import { shouldAppendResumeInteractive } from '../utils/resume';
+import {
+  getSandboxErrorPatch,
+  getSandboxFailedLabel,
+  translateSandboxFailedLabel
+} from '../utils/sandboxStatus';
 import { formatChatRequestVariables } from '../utils/requestVariables';
 import {
   createStreamRenderScheduler,
@@ -282,15 +287,17 @@ export const useChatGenerate = ({
                 : t('chat:sandbox_status_ready_cold');
             }
             if (phase === 'failed') {
-              return message
-                ? t('chat:sandbox_status_failed_with_message', { message })
-                : t('chat:sandbox_status_failed');
+              // 结合 step 区分“配置收敛/升级”与“运行环境准备”；无 step 的旧事件回退通用文案。
+              const label = getSandboxFailedLabel(sandboxStatus.step, message);
+              return translateSandboxFailedLabel(label, t);
             }
 
             return phaseLabelMap[phase];
           };
           return {
             ...item,
+            // failed 的环节与原因必须留存，后续 Agent/ToolCall 节点错误会覆盖 moduleName。
+            ...getSandboxErrorPatch(sandboxStatus),
             status: 'loading' as const,
             moduleName: getSandboxPhaseLabel()
           };

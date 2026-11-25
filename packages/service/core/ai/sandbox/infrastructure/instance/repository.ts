@@ -387,7 +387,7 @@ export async function findStaleSandboxOperations(params: {
   now?: Date;
 }) {
   const heartbeatFilter = { 'operation.heartbeatAt': { $lte: params.heartbeatBefore } };
-  return MongoSandboxInstance.find({
+  const resources = await MongoSandboxInstance.find({
     status: { $in: params.statuses },
     $or: [
       heartbeatFilter,
@@ -395,6 +395,7 @@ export async function findStaleSandboxOperations(params: {
       ...(params.retryPhases?.length ? [{ 'operation.phase': { $in: params.retryPhases } }] : [])
     ]
   }).lean<SandboxResourceDoc[]>();
+  return resources;
 }
 
 export async function findSandboxResourcesBySource(params: SandboxSourceParams) {
@@ -408,11 +409,12 @@ export async function findSandboxInstanceBySandboxId(params: {
   sandboxId: string;
   status?: SandboxInstanceStatusType;
 }) {
-  return MongoSandboxInstance.findOne({
+  const resource = await MongoSandboxInstance.findOne({
     ...(params.provider ? { provider: params.provider } : {}),
     sandboxId: params.sandboxId,
     ...(params.status ? { status: params.status } : {})
   }).lean<SandboxResourceDoc | null>();
+  return resource;
 }
 
 export async function findSandboxInstanceBySandboxIdAndSource(params: {
@@ -422,13 +424,14 @@ export async function findSandboxInstanceBySandboxIdAndSource(params: {
   sourceId: string;
   status?: SandboxInstanceStatusType;
 }) {
-  return MongoSandboxInstance.findOne({
+  const resource = await MongoSandboxInstance.findOne({
     ...(params.provider ? { provider: params.provider } : {}),
     sandboxId: params.sandboxId,
     sourceType: params.sourceType,
     sourceId: params.sourceId,
     ...(params.status ? { status: params.status } : {})
   }).lean<SandboxResourceDoc | null>();
+  return resource;
 }
 
 export async function existsSandboxInstanceBySandboxId(params: {
@@ -445,13 +448,14 @@ export async function findSandboxInstanceBySource(params: {
   userId: string;
   status?: SandboxInstanceStatusType;
 }) {
-  return MongoSandboxInstance.findOne({
+  const resource = await MongoSandboxInstance.findOne({
     ...(params.provider ? { provider: params.provider } : {}),
     sourceType: params.sourceType,
     sourceId: params.sourceId,
     userId: params.userId,
     ...(params.status ? { status: params.status } : {})
   }).lean<SandboxResourceDoc | null>();
+  return resource;
 }
 
 /**
