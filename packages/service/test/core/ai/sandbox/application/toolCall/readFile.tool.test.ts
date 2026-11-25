@@ -114,7 +114,7 @@ describe('sandboxReadFileTool', () => {
     expect(result.response).toBe('12345');
   });
 
-  it('decodes nullish file content as an empty string', async () => {
+  it('reports a nullish (0 byte) file instead of an empty string', async () => {
     const sandboxInstance = createSandboxInstance(null);
 
     const result = await sandboxReadFileTool.execute({
@@ -128,7 +128,114 @@ describe('sandboxReadFileTool', () => {
       }
     });
 
-    expect(result.response).toBe('');
+    expect(result.response).toBe('File is empty (0 bytes): empty.txt');
+  });
+
+  it('reports an explicit 0 byte file', async () => {
+    const sandboxInstance = createSandboxInstance(Buffer.alloc(0));
+
+    const result = await sandboxReadFileTool.execute({
+      sourceType: ChatSourceTypeEnum.app,
+      sourceId: 'app_1',
+      userId: 'user_1',
+      chatId: 'chat_1',
+      sandboxInstance,
+      params: {
+        path: 'empty.txt'
+      }
+    });
+
+    expect(result.response).toBe('File is empty (0 bytes): empty.txt');
+  });
+
+  it('reports a 1 byte newline-only file as whitespace content', async () => {
+    const sandboxInstance = createSandboxInstance('\n');
+
+    const result = await sandboxReadFileTool.execute({
+      sourceType: ChatSourceTypeEnum.app,
+      sourceId: 'app_1',
+      userId: 'user_1',
+      chatId: 'chat_1',
+      sandboxInstance,
+      params: {
+        path: 'newline.txt'
+      }
+    });
+
+    expect(result.response).toBe('File contains only whitespace (1 bytes): newline.txt');
+  });
+
+  it('reports a whitespace-only file with its byte size', async () => {
+    // 2 空格 + \n + \t + \n + 1 空格 = 6 字节
+    const sandboxInstance = createSandboxInstance('  \n\t\n ');
+
+    const result = await sandboxReadFileTool.execute({
+      sourceType: ChatSourceTypeEnum.app,
+      sourceId: 'app_1',
+      userId: 'user_1',
+      chatId: 'chat_1',
+      sandboxInstance,
+      params: {
+        path: 'spaces.txt'
+      }
+    });
+
+    expect(result.response).toBe('File contains only whitespace (6 bytes): spaces.txt');
+  });
+
+  it('reports an empty file before validating offset bounds', async () => {
+    const sandboxInstance = createSandboxInstance('');
+
+    const result = await sandboxReadFileTool.execute({
+      sourceType: ChatSourceTypeEnum.app,
+      sourceId: 'app_1',
+      userId: 'user_1',
+      chatId: 'chat_1',
+      sandboxInstance,
+      params: {
+        path: 'empty.txt',
+        offset: 2
+      }
+    });
+
+    expect(result.response).toBe('File is empty (0 bytes): empty.txt');
+  });
+
+  it('reports a whitespace-only file before validating offset bounds', async () => {
+    const sandboxInstance = createSandboxInstance('  \n\t\n ');
+
+    const result = await sandboxReadFileTool.execute({
+      sourceType: ChatSourceTypeEnum.app,
+      sourceId: 'app_1',
+      userId: 'user_1',
+      chatId: 'chat_1',
+      sandboxInstance,
+      params: {
+        path: 'spaces.txt',
+        offset: 2
+      }
+    });
+
+    expect(result.response).toBe('File contains only whitespace (6 bytes): spaces.txt');
+  });
+
+  it('counts raw bytes for a BOM-only Uint8Array', async () => {
+    const bom = new Uint8Array([0xef, 0xbb, 0xbf]);
+    const sandboxInstance = createSandboxInstance(bom);
+
+    const result = await sandboxReadFileTool.execute({
+      sourceType: ChatSourceTypeEnum.app,
+      sourceId: 'app_1',
+      userId: 'user_1',
+      chatId: 'chat_1',
+      sandboxInstance,
+      params: {
+        path: 'bom.txt'
+      }
+    });
+
+    // TextDecoder 会去掉 BOM，字节数必须取原始 Uint8Array 的 byteLength
+    expect(result.response).toBe('File contains only whitespace (3 bytes): bom.txt');
   });
 
   it('rejects an offset beyond the end of the file', async () => {
