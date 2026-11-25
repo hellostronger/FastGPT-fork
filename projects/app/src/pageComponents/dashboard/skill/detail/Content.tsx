@@ -18,14 +18,12 @@ const Content = () => {
     sandboxState,
     skillId,
     isSkillReady,
-    handleSandboxError,
     upgradeSandboxRuntime,
     sandboxError
   } = useContextSelector(SkillDetailContext, (v) => ({
     sandboxState: v.sandboxState,
     skillId: v.skillId,
     isSkillReady: v.isSkillReady,
-    handleSandboxError: v.handleSandboxError,
     upgradeSandboxRuntime: v.upgradeSandboxRuntime,
     sandboxError: v.sandboxError
   }));
@@ -64,7 +62,6 @@ const Content = () => {
           enablePathCopy={true}
           enableZipExtract={true}
           enableMultiSelect={true}
-          onError={(err) => handleSandboxError(err.message)}
           headerRight={canOperateSandbox ? <RightHeader /> : undefined}
         />
       )}
