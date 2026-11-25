@@ -6,6 +6,8 @@ import {
   SandboxReadyTimeoutError,
   SandboxStateError,
   SandboxTerminationError,
+  SEALOS_DEVBOX_CREATE_REJECTED_CODE,
+  SEALOS_DEVBOX_FAILED_CODE,
   getSandboxFailureDetail,
   type SandboxFailureDetail
 } from '../../errors';
@@ -44,10 +46,12 @@ const COMMAND_READY_TIMEOUT_MS = 300_000;
 const COMMAND_READY_INTERVAL_MS = 1_000;
 const COMMAND_READY_PROBE_TIMEOUT_MS = 5_000;
 
-/** Devbox controller 的不可自愈终态；码表本体在 SDK errors 包。 */
-const DEVBOX_FAILED_CODE = 'SEALOS_DEVBOX::FAILED';
-/** create 被 provider 明确拒绝（Pod 准入/配额等），远端不会留下可恢复实例。 */
-const DEVBOX_CREATE_REJECTED_CODE = 'SEALOS_DEVBOX::CREATE_REJECTED';
+/**
+ * Devbox controller 的不可自愈终态与 create 明确拒绝码。
+ * 码值只在 SDK errors 包定义一次，adapter 只做引用，避免与终止码表漂移。
+ */
+const DEVBOX_FAILED_CODE = SEALOS_DEVBOX_FAILED_CODE;
+const DEVBOX_CREATE_REJECTED_CODE = SEALOS_DEVBOX_CREATE_REJECTED_CODE;
 
 /** 只有 controller 的 Error 阶段是终止；Unknown 与过渡态都按“结果未知”处理。 */
 const isTerminalDevboxPhase = (phase: string): boolean => phase === DevboxPhaseEnum.Error;

@@ -85,6 +85,12 @@ export type SandboxFailureDetail = {
   displayMessage: string;
 };
 
+/** sealos-devbox 的不可自愈终态码；adapter 与码表共用同一份字面量，避免码值漂移。 */
+export const SEALOS_DEVBOX_FAILED_CODE = 'SEALOS_DEVBOX::FAILED';
+
+/** sealos-devbox create 被 provider 明确拒绝；远端不会留下可恢复实例。 */
+export const SEALOS_DEVBOX_CREATE_REJECTED_CODE = 'SEALOS_DEVBOX::CREATE_REJECTED';
+
 /**
  * provider 原始终止码表。
  *
@@ -105,8 +111,8 @@ export type SandboxFailureDetail = {
 export const SANDBOX_TERMINAL_CODES: readonly string[] = [
   'KUBERNETES::POD_FAILED',
   'KUBERNETES::QUOTA_EXCEEDED',
-  'SEALOS_DEVBOX::FAILED',
-  'SEALOS_DEVBOX::CREATE_REJECTED'
+  SEALOS_DEVBOX_FAILED_CODE,
+  SEALOS_DEVBOX_CREATE_REJECTED_CODE
 ];
 
 /** 适配器自身/传输层错误码，不代表 provider 终止原因，选码时排在 provider 码之后。 */
@@ -201,17 +207,16 @@ const collectFailureEvidence = (value: unknown): FailureEvidence => {
 };
 
 /**
- * 终止码优先，其次是 provider 命名空间码，最后才是非传输层码。
+ * 终止码优先，其次只接受带 provider 命名空间的码（`PROVIDER::CODE`）。
  *
- * 只有传输层/适配器码时返回 undefined：包装层不能伪装成 provider 结构化证据。
+ * 只有传输层/适配器码、或裸网络系统码（`ECONNREFUSED`/`ETIMEDOUT`/`ENOTFOUND` 等
+ * Node/axios 错误码）时返回 undefined：这些是“结果未知”的传输层噪声，包装层不能
+ * 伪装成 provider 结构化证据，否则会把内部地址等实现细节透出到用户界面。
  */
 const pickFailureCode = (codes: string[]): string | undefined => {
   const terminal = codes.find((code) => SANDBOX_TERMINAL_CODES.includes(code));
   if (terminal) return terminal;
-  return (
-    codes.find((code) => code.includes('::') && !TRANSPORT_ERROR_CODES.has(code)) ??
-    codes.find((code) => !TRANSPORT_ERROR_CODES.has(code))
-  );
+  return codes.find((code) => code.includes('::') && !TRANSPORT_ERROR_CODES.has(code));
 };
 
 /** 选取最具体的 provider 文案，并确保展示原因里保留结构化 code。 */

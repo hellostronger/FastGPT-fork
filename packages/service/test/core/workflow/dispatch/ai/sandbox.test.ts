@@ -1,5 +1,7 @@
 import { ChatSourceTypeEnum } from '@fastgpt/global/core/chat/constants';
+import { UserError } from '@fastgpt/global/common/error/utils';
 import { getRunningSandboxId } from '@fastgpt/service/core/ai/sandbox/utils/id';
+import { createAgentSandboxLimitReachedError } from '@fastgpt/service/core/ai/sandbox/error';
 import { ensureWorkflowSandboxReadyForUse } from '@fastgpt/service/core/workflow/dispatch/ai/sandbox';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ConnectionError, SandboxTerminationError } from '@fastgpt-sdk/sandbox-adapter';
@@ -137,6 +139,27 @@ describe('ensureWorkflowSandboxReadyForUse', () => {
     ]);
     expect(prepareRuntime).toHaveBeenCalledTimes(stage === 'configuration' ? 0 : 1);
     expect(markChatSandboxEnabledMock).not.toHaveBeenCalled();
+  });
+
+  it('forwards business error i18n keys so the client can translate them', async () => {
+    const workflowStreamResponse = vi.fn();
+    const prepareRuntime = vi.fn(async () => {
+      throw createAgentSandboxLimitReachedError();
+    });
+
+    await expect(
+      ensureWorkflowSandboxReadyForUse({ ...source, workflowStreamResponse, prepareRuntime })
+    ).rejects.toBeInstanceOf(UserError);
+
+    const failed = workflowStreamResponse.mock.calls
+      .map(([event]) => event.data)
+      .find((data) => data.phase === 'failed');
+
+    // 业务错误命中 ERROR_RESPONSE，getErrText 返回的是 i18n key 而非文案；
+    // 服务端保持这个约定，最终展示由前端 translateSandboxFailureMessage 按当前语言翻译
+    // （见 projects/app 的 sandboxStatus.test.ts 用例）。
+    expect(failed).toMatchObject({ sandboxId, phase: 'failed', step: 'prepare' });
+    expect(failed?.message).toBe('common:code_error.sandbox_error.agent_sandbox_limit_reached');
   });
 
   it('reports the provider display reason instead of the generic wrapper text', async () => {

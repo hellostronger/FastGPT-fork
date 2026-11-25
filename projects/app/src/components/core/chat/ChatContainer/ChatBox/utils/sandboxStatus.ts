@@ -6,6 +6,7 @@
  * 避免旧后端返回时前端显示空文案。
  */
 import type { TFunction } from 'i18next';
+import { I18N_NAMESPACES_MAP } from '@fastgpt/web/i18n/constants';
 
 export type SandboxFailedStep = 'upgrade' | 'prepare';
 
@@ -84,6 +85,26 @@ export const translateSandboxFailedLabel = (label: SandboxFailedLabel, t: TFunct
 };
 
 /**
+ * 把服务端透传的失败原因翻译成当前语言。
+ *
+ * 服务端 `getErrText` 命中 `ERROR_RESPONSE` 时返回的是 i18n key
+ * （如 `common:code_error.sandbox_error.agent_sandbox_limit_reached`），
+ * 而 provider 的 `displayMessage` 已经是可读的纯文案。只对「已知 namespace 的 ns:key」
+ * 调用 `t`，其余原样返回，避免把上游/用户文案当成 key 误翻译；
+ * 翻译缺失（`t` 原样返回 key）时同样回退为原始 key，不显示空文案。
+ */
+export const translateSandboxFailureMessage = (message: string, t: TFunction): string => {
+  const separator = message.indexOf(':');
+  if (separator <= 0) return message;
+  const namespace = message.slice(0, separator);
+  const key = message.slice(separator + 1);
+  if (!key || !I18N_NAMESPACES_MAP[namespace]) return message;
+
+  const translated = t(message);
+  return translated === message ? message : translated;
+};
+
+/**
  * 处理 sandbox 状态事件时写入 item 的失败上下文。
  *
  * 只有 failed 是终态；后续 successful 状态必须清空旧上下文，避免重试成功后仍展示旧原因。
@@ -141,13 +162,17 @@ export const resolveChatItemErrorContent = ({
       getSandboxFailedLabel(sandboxError.step, undefined),
       t
     );
+    // 服务端可能透传 i18n key（ERROR_RESPONSE 映射）或 provider 可读文案，统一在这里归一。
+    const sandboxMessage = sandboxError.message
+      ? translateSandboxFailureMessage(sandboxError.message, t)
+      : undefined;
     // 只有失败节点就是沙箱节点，或完全没有节点级错误时才使用沙箱文案。
     const sandboxNodeFailed =
       !errorText || (!!sandboxError.nodeId && failedNodeId === sandboxError.nodeId);
 
     if (sandboxNodeFailed) {
       const message =
-        sandboxError.message ||
+        sandboxMessage ||
         (errorText?.errorText ? t(errorText.errorText) : undefined) ||
         (errorMsg ? t(errorMsg) : undefined) ||
         t('Unknow error');
@@ -163,7 +188,7 @@ export const resolveChatItemErrorContent = ({
     return {
       title: nodeNameText ? `${logErrorPrefix} - ${nodeNameText}` : logErrorPrefix,
       message: nodeErrorText,
-      secondary: sandboxError.message ? `${phaseLabel}：${sandboxError.message}` : phaseLabel
+      secondary: sandboxMessage ? `${phaseLabel}：${sandboxMessage}` : phaseLabel
     };
   }
 

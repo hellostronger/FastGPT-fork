@@ -3,6 +3,8 @@ import {
   CommandExecutionError,
   ConnectionError,
   SANDBOX_TERMINAL_CODES,
+  SEALOS_DEVBOX_CREATE_REJECTED_CODE,
+  SEALOS_DEVBOX_FAILED_CODE,
   SandboxException,
   SandboxNotFoundError,
   SandboxStateError,
@@ -109,12 +111,45 @@ describe('getSandboxFailureDetail', () => {
     expect(getSandboxFailureDetail('KUBERNETES::POD_FAILED')).toBeUndefined();
   });
 
+  it('ignores bare transport/system codes instead of treating them as provider evidence', () => {
+    // axios/Node 的网络错误把系统码放在 code 上，这不是 provider 结构化证据；
+    // 若被当成失败契约，displayMessage 会把内部地址透出到最终错误卡片。
+    for (const code of ['ECONNREFUSED', 'ETIMEDOUT', 'ENOTFOUND', 'ECONNRESET']) {
+      expect(
+        getSandboxFailureDetail({
+          code,
+          message: `connect ${code} 10.0.0.12:6443`
+        })
+      ).toBeUndefined();
+    }
+
+    // 外层包装文案同样不能把裸网络码升级成 provider 码。
+    const wrapped = new ConnectionError('Failed to create sandbox', 'http://10.0.0.12:6443', {
+      code: 'ECONNREFUSED',
+      message: 'connect ECONNREFUSED 10.0.0.12:6443'
+    });
+    expect(getSandboxFailureDetail(wrapped)).toBeUndefined();
+  });
+
+  it('still reports namespaced provider codes that are not terminal', () => {
+    // 收敛后只按命名空间过滤，provider 未知/超时码仍要透传结构化证据。
+    expect(
+      getSandboxFailureDetail({ code: 'KUBERNETES::POD_READY_TIMEOUT', message: 'not ready' })
+    ).toMatchObject({ code: 'KUBERNETES::POD_READY_TIMEOUT', terminated: false });
+    expect(
+      getSandboxFailureDetail({ code: 'SEALOS_DEVBOX::UNKNOWN_PHASE', message: 'unknown' })
+    ).toMatchObject({ code: 'SEALOS_DEVBOX::UNKNOWN_PHASE', terminated: false });
+  });
+
   it('exposes the single terminal code table for both providers', () => {
     expect(SANDBOX_TERMINAL_CODES).toContain('KUBERNETES::POD_FAILED');
     expect(SANDBOX_TERMINAL_CODES).not.toContain('KUBERNETES::POD_READY_TIMEOUT');
     // devbox 码与 opensandbox 码在同一张表：provider 边界只产出证据，码表只有一份。
     expect(SANDBOX_TERMINAL_CODES).toContain('SEALOS_DEVBOX::FAILED');
     expect(SANDBOX_TERMINAL_CODES).toContain('SEALOS_DEVBOX::CREATE_REJECTED');
+    // adapter 复用的常量就是码表本体，不再是第二个字面量来源。
+    expect(SANDBOX_TERMINAL_CODES).toContain(SEALOS_DEVBOX_FAILED_CODE);
+    expect(SANDBOX_TERMINAL_CODES).toContain(SEALOS_DEVBOX_CREATE_REJECTED_CODE);
     // 早期从文本特征合成的兼容码从未发布，不再参与终止判定。
     expect(SANDBOX_TERMINAL_CODES).not.toContain('CONTAINER_FAILED');
     expect(SANDBOX_TERMINAL_CODES).not.toContain('INIT_CONTAINER_FAILED');

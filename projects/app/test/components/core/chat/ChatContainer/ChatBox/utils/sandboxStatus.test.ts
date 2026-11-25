@@ -4,7 +4,8 @@ import {
   getSandboxErrorPatch,
   getSandboxFailedLabel,
   resolveChatItemErrorContent,
-  translateSandboxFailedLabel
+  translateSandboxFailedLabel,
+  translateSandboxFailureMessage
 } from '@/components/core/chat/ChatContainer/ChatBox/utils/sandboxStatus';
 
 /** 只实现测试用到的字面量 key，并记录调用以便断言没有动态 key。 */
@@ -15,7 +16,9 @@ const createTranslate = () => {
     const dictionary: Record<string, string> = {
       'chat:sandbox_status_failed': '沙箱创建失败',
       'chat:sandbox_status_failed_prepare': '运行环境准备失败',
-      'chat:sandbox_status_failed_upgrade': '配置升级失败'
+      'chat:sandbox_status_failed_upgrade': '配置升级失败',
+      'common:code_error.sandbox_error.agent_sandbox_limit_reached':
+        '虚拟机数量已达系统上限，暂时无法启动新虚拟机，请稍后重试。'
     };
     if (key === 'chat:sandbox_status_failed_prepare_with_message') {
       return `运行环境准备失败：${values?.message ?? ''}`;
@@ -98,6 +101,44 @@ describe('translateSandboxFailedLabel', () => {
       'chat:sandbox_status_failed_with_message',
       'chat:sandbox_status_failed'
     ]);
+  });
+});
+
+describe('translateSandboxFailureMessage', () => {
+  it('translates an i18n key passed through by the server', () => {
+    // 服务端 getErrText 命中 ERROR_RESPONSE 时，failed 事件带的是 i18n key 而不是文案。
+    const { t, calls } = createTranslate();
+
+    expect(
+      translateSandboxFailureMessage(
+        'common:code_error.sandbox_error.agent_sandbox_limit_reached',
+        t
+      )
+    ).toBe('虚拟机数量已达系统上限，暂时无法启动新虚拟机，请稍后重试。');
+    expect(calls).toEqual(['common:code_error.sandbox_error.agent_sandbox_limit_reached']);
+  });
+
+  it('keeps plain provider text untouched', () => {
+    const { t, calls } = createTranslate();
+
+    for (const message of [
+      'container sandbox exited with code 127',
+      'Failed: quota exceeded',
+      'not-a-namespace:some.key',
+      'http://10.0.0.12:6443 is unreachable'
+    ]) {
+      expect(translateSandboxFailureMessage(message, t)).toBe(message);
+    }
+    // 普通文案不能被当成 key 交给 i18next。
+    expect(calls).toEqual([]);
+  });
+
+  it('falls back to the raw key when the translation is missing', () => {
+    const { t } = createTranslate();
+
+    expect(translateSandboxFailureMessage('common:code_error.unknown_key', t)).toBe(
+      'common:code_error.unknown_key'
+    );
   });
 });
 
@@ -245,6 +286,75 @@ describe('resolveChatItemErrorContent', () => {
     expect(content?.title).toContain('配置升级失败');
     expect(content?.message).toBe('node failed');
     expect(content?.secondary).toBe('Agent');
+  });
+
+  it('renders the translated reason when the failed event carries an i18n key', () => {
+    const { t } = createTranslate();
+
+    const content = resolveChatItemErrorContent({
+      errorMsg: 'Failed to create sandbox',
+      errorText: { moduleName: 'Agent', errorText: 'Failed to create sandbox' },
+      moduleName: 'Agent',
+      sandboxError: {
+        step: 'prepare',
+        nodeId: 'agent_node',
+        // 服务端透传的是 i18n key，不能原样显示。
+        message: 'common:code_error.sandbox_error.agent_sandbox_limit_reached'
+      },
+      failedNodeId: 'agent_node',
+      logErrorPrefix: '运行错误',
+      t
+    });
+
+    expect(content?.title).toContain('运行环境准备失败');
+    expect(content?.message).toBe('虚拟机数量已达系统上限，暂时无法启动新虚拟机，请稍后重试。');
+    expect(content?.message).not.toContain('common:code_error');
+  });
+
+  it('translates the sandbox reason demoted to secondary information', () => {
+    const { t } = createTranslate();
+
+    const content = resolveChatItemErrorContent({
+      errorMsg: 'Request failed with status code 503',
+      errorText: {
+        moduleName: 'HTTP request',
+        errorText: 'Request failed with status code 503'
+      },
+      moduleName: 'HTTP request',
+      sandboxError: {
+        step: 'prepare',
+        nodeId: 'agent_node',
+        message: 'common:code_error.sandbox_error.agent_sandbox_limit_reached'
+      },
+      failedNodeId: 'http_node',
+      logErrorPrefix: '运行错误',
+      t
+    });
+
+    expect(content?.message).toContain('503');
+    expect(content?.secondary).toContain('运行环境准备失败');
+    expect(content?.secondary).toContain('虚拟机数量已达系统上限');
+    expect(content?.secondary).not.toContain('common:code_error');
+  });
+
+  it('keeps plain provider reasons verbatim on the card', () => {
+    const { t } = createTranslate();
+
+    const content = resolveChatItemErrorContent({
+      errorMsg: 'Failed to create sandbox',
+      errorText: { moduleName: 'Agent', errorText: 'Failed to create sandbox' },
+      moduleName: 'Agent',
+      sandboxError: {
+        step: 'prepare',
+        nodeId: 'agent_node',
+        message: 'container sandbox exited with code 127'
+      },
+      failedNodeId: 'agent_node',
+      logErrorPrefix: '运行错误',
+      t
+    });
+
+    expect(content?.message).toBe('container sandbox exited with code 127');
   });
 
   it('returns undefined without any error text', () => {
