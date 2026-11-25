@@ -807,7 +807,7 @@ describe('createStreamResponse', () => {
     );
 
     it.each(['abort', 'error'] as const)(
-      'should retain unfinished tool arguments on %s without synthesizing parameters',
+      'should never expose unfinished tool arguments on %s',
       async (termination) => {
         const callbacks = createCallbacks();
         let stopping = false;
@@ -831,7 +831,8 @@ describe('createStreamResponse', () => {
           ...callbacks
         });
 
-        expect(result.toolCalls).toEqual([call]);
+        // 中断时半截 tool call 直接丢弃；上游异常时保留原始参数，不做任何改写。
+        expect(result.toolCalls).toEqual(termination === 'abort' ? [] : [call]);
         expect(result.usage).toEqual(usage);
         expect(result.finish_reason).toBe(termination === 'abort' ? 'close' : null);
         expect(result.error).toBe(termination === 'abort' ? undefined : error);
@@ -840,6 +841,41 @@ describe('createStreamResponse', () => {
         expect(callbacks.onToolParam).not.toHaveBeenCalled();
       }
     );
+
+    it('should drop unfinished tool calls when abort lands right before EOF', async () => {
+      // 只收到一段半截参数后上游直接 EOF：不会再进入下一轮循环去检查 isAborted。
+      const callbacks = createCallbacks();
+      let stopping = false;
+      callbacks.onToolCall.mockImplementation(() => {
+        stopping = true;
+      });
+      const { response, abort } = createStream([
+        {
+          ...chunk({
+            tool_calls: [
+              { index: 0, id: 'call_1', function: { name: 'search', arguments: '{"q":' } }
+            ]
+          }),
+          usage
+        }
+      ]);
+      const onToolParam = vi.fn();
+      const result = await createStreamResponse({
+        body: nativeBody,
+        response,
+        isAborted: () => stopping,
+        ...callbacks,
+        onToolParam
+      });
+
+      // 流结束边界必须用最终停止状态兜底，丢弃未完成调用并判定为正常关闭。
+      expect(result.toolCalls ?? []).toEqual([]);
+      expect(result.finish_reason).toBe('close');
+      expect(result.usage).toEqual(usage);
+      expect(abort).toHaveBeenCalledTimes(1);
+      expect(callbacks.onToolCall).toHaveBeenCalledTimes(1);
+      expect(onToolParam).not.toHaveBeenCalled();
+    });
 
     it.each(
       modes.flatMap((mode) => [

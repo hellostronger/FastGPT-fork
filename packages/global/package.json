@@ -24,6 +24,7 @@
     "js-yaml": "catalog:",
     "jschardet": "3.1.1",
     "json5": "catalog:",
+    "jsonrepair": "^3.0.0",
     "lodash-es": "catalog:",
     "nanoid": "catalog:",
     "openai": "6.34.0",

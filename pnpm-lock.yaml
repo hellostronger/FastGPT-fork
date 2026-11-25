@@ -541,6 +541,9 @@ importers:
       json5:
         specifier: 'catalog:'
         version: 2.2.3
+      jsonrepair:
+        specifier: ^3.0.0
+        version: 3.13.2
       lodash-es:
         specifier: 'catalog:'
         version: 4.18.1

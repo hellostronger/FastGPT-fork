@@ -47,6 +47,9 @@ export const createStreamResponse = async ({
     }
   }
 
+  /** 用户中断时，累积中的 tool arguments 必然不完整，不能作为已完成结果返回。 */
+  let aborted = false;
+
   /** 统一读取、取消和异常捕获；各模式按原有顺序消费解析后的正文、思考和工具增量。 */
   const consumeStream = async (
     onPart: (data: ReturnType<typeof parsePart>, part: ChatCompletionChunk) => void
@@ -55,6 +58,7 @@ export const createStreamResponse = async ({
       for await (const part of readStream()) {
         if (isAborted?.()) {
           // 用户中断是正常关闭，保留已经收到的内容。
+          aborted = true;
           response.controller?.abort();
           updateFinishReason('close');
           break;
@@ -65,6 +69,15 @@ export const createStreamResponse = async ({
     } catch (error: any) {
       // 包含读取和消费回调异常，先保留 parser 状态，再由上层决定是否抛出。
       updateError(error?.error || error);
+    } finally {
+      // 流结束边界再确认一次最终停止状态：若停止信号在半截参数之后才转真、且上游
+      // 没有后续 chunk 直接 EOF，循环不会再进入下一轮检查，必须在这里兜底。
+      // 否则半截 tool call 会按正常结果返回并落库，调用方也会把结束判为 abnormal_close。
+      if (isAborted?.() && !aborted) {
+        aborted = true;
+        updateFinishReason('close');
+        response.controller?.abort();
+      }
     }
   };
 
@@ -169,9 +182,12 @@ export const createStreamResponse = async ({
         reasoningText: reasoningContent,
         usage,
         finish_reason,
-        toolCalls: toolCallError
-          ? []
-          : normalizeNativeToolCalls({ toolCalls: mergedToolCalls, toolNames })
+        // 中断时丢弃未完成调用；正常结束直接返回原始参数，不做任何改写，
+        // 保证工具校验、长度截断、上游异常等契约与修复前一致。
+        toolCalls:
+          toolCallError || aborted
+            ? []
+            : normalizeNativeToolCalls({ toolCalls: mergedToolCalls, toolNames })
       };
     } else {
       let startResponseWrite = false;
@@ -216,11 +232,14 @@ export const createStreamResponse = async ({
       // prompt tool 模式结束后用完整文本解析最终回答和工具调用。
       const { answer: llmAnswer, streamAnswer, toolCalls } = parsePromptToolCall(content);
 
+      // 中断的 prompt 协议不能产出半截调用；其余情况保留解析器原始参数。
+      const finalToolCalls = aborted ? undefined : toolCalls;
+
       if (streamAnswer) {
         onStreaming?.({ text: streamAnswer });
       }
 
-      toolCalls?.forEach((call) => {
+      finalToolCalls?.forEach((call) => {
         onToolCall?.({ call });
       });
 
@@ -230,7 +249,7 @@ export const createStreamResponse = async ({
         reasoningText: reasoningContent,
         finish_reason,
         usage,
-        toolCalls
+        toolCalls: finalToolCalls
       };
     }
   } else {

@@ -368,4 +368,77 @@ describe('createAgentLoopCoreAssistantEventCollector', () => {
       { text: { content: 'After' } }
     ]);
   });
+
+  it('drops streaming partial tool calls when the response is closed by the user', () => {
+    const collector = createAgentLoopCoreAssistantEventCollector();
+    collector.emitEvent({
+      type: 'llm_request_start',
+      responseId: 'close',
+      requestIndex: 1,
+      modelName: 'Model'
+    });
+    collector.emitEvent({ type: 'answer_delta', text: 'thinking' });
+    // 中断前只累积到半截 arguments，工具始终没有执行结果。
+    collector.emitEvent({
+      type: 'tool_call',
+      call: call('partial', 'ask_user', '{"reason":"收集表单数据')
+    });
+    collector.emitEvent({
+      type: 'tool_params',
+      callId: 'partial',
+      argsDelta: '以生成专属HTML文件","blockerType":"missing_required_input"'
+    });
+    collector.emitEvent({ ...end('close'), finishReason: 'close', toolCalls: [] });
+
+    expect(collector.assistantResponses).toHaveLength(1);
+    expect(collector.assistantResponses[0]).toMatchObject({ text: { content: 'thinking' } });
+    expect(collector.assistantResponses[0]).not.toHaveProperty('tools');
+    expect(collector.assistantResponses[0]).not.toHaveProperty('toolCallIds');
+    // 落库结果必须满足 schema，且不包含半截参数。
+    expect(AIChatItemValueSchema.safeParse(collector.assistantResponses[0]).success).toBe(true);
+    expect(JSON.stringify(collector.assistantResponses)).not.toContain('missing_required_input');
+  });
+
+  it('drops tool calls without results even when the close event carries toolCalls', () => {
+    const collector = createAgentLoopCoreAssistantEventCollector();
+    collector.emitEvent({
+      type: 'llm_request_start',
+      responseId: 'close-with-calls',
+      requestIndex: 1,
+      modelName: 'Model'
+    });
+    collector.emitEvent({ type: 'answer_delta', text: 'thinking' });
+
+    // 已完成执行的工具：有 response，中断后仍应保留。
+    collector.emitEvent({ type: 'tool_call', call: call('done', 'search', '{"q":"x"}') });
+    collector.emitEvent({
+      type: 'tool_run_end',
+      call: call('done', 'search', '{"q":"x"}'),
+      response: 'search result',
+      seconds: 0
+    });
+    // 中断时只累积到半截参数、从未执行的工具。
+    collector.emitEvent({
+      type: 'tool_call',
+      call: call('partial', 'ask_user', '{"reason":"收集表单数据')
+    });
+
+    collector.emitEvent({
+      ...end('close-with-calls', [
+        call('done', 'search', '{"q":"x"}'),
+        call('partial', 'ask_user', '{"reason":"收集表单数据')
+      ]),
+      responseId: 'close-with-calls',
+      finishReason: 'close'
+    });
+
+    expect(collector.assistantResponses).toHaveLength(1);
+    const value = collector.assistantResponses[0];
+    expect(value.text).toEqual({ content: 'thinking' });
+    // 只有带执行结果的卡片能落库。
+    expect(value.tools?.map((tool) => tool.id)).toEqual(['done']);
+    expect(value.toolCallIds).toEqual(['done']);
+    expect(JSON.stringify(collector.assistantResponses)).not.toContain('收集表单数据');
+    expect(AIChatItemValueSchema.safeParse(value).success).toBe(true);
+  });
 });
