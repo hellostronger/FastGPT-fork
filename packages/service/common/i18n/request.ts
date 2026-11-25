@@ -110,7 +110,9 @@ export const createApiI18n = (resourceLoaders: ResourceLoaders): ApiI18n => {
   registerDefaultTranslatorFactory(() => getTranslator(LangEnum.en));
 
   return async ({ req, res }, callback) => {
-    const locale = getLocale(req) ?? LangEnum.en;
+    // `ApiI18n` 只要求 `headers`（上游 main 的入参是完整 NodeHttpRequest）；`getLocale` 仅读取
+    // headers/Cookie，这里显式收窄后转交，避免为 1.6.x 引入不必要的签名差异。
+    const locale = getLocale(req as NodeHttpRequest) ?? LangEnum.en;
     const context: RequestI18nContext = { locale };
 
     try {
