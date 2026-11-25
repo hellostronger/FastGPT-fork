@@ -25,6 +25,25 @@ const responseI18n = new WeakMap<NodeHttpResponse, RequestI18nContext>();
 // 后台任务（渠道回调、定时任务）没有 HTTP 请求上下文，由应用入口注册默认语言翻译来源。
 let defaultTranslatorFactory: (() => Promise<RequestTranslator>) | undefined;
 
+// 应用注入资源后登记的可翻译 namespace；用于区分真正的 i18n key 与带冒号的普通文案。
+let knownNamespaces: ReadonlySet<string> = new Set();
+
+/**
+ * 判断文本是否是「已知 namespace 的 `ns:key`」。
+ *
+ * 只按形态（`^[A-Za-z][A-Za-z0-9_]*:`）判断会把 `Failed: timeout` 这类带冒号的
+ * 上游/用户文案误认成 key，导致可读原因被当成未解析 key 丢弃。资源注册后以实际
+ * 注入的 namespace 为准；尚未注册时退回形态判断，保持旧部署不显示 raw key。
+ */
+export const isApiI18nKey = (message: string): boolean => {
+  const separator = message.indexOf(':');
+  if (separator <= 0 || separator === message.length - 1) return false;
+
+  const namespace = message.slice(0, separator);
+  if (knownNamespaces.size > 0) return knownNamespaces.has(namespace);
+  return /^[A-Za-z][A-Za-z0-9_]*$/.test(namespace);
+};
+
 /**
  * 由 `createApiI18n` 注册默认语言（英文）翻译函数工厂。
  * 后台路径与请求路径共用同一份资源缓存，避免重复加载 i18n 资源。
@@ -55,7 +74,7 @@ const translateWith = (message: string, translator: RequestTranslator): string =
  */
 export const translateApiMessage = (message: string, res?: NodeHttpResponse): string => {
   const context = (res && responseI18n.get(res)) || requestI18n.getStore();
-  if (!context?.translator || !/^[A-Za-z][A-Za-z0-9_]*:/.test(message)) return message;
+  if (!context?.translator || !isApiI18nKey(message)) return message;
   return translateWith(message, context.translator);
 };
 
@@ -69,7 +88,7 @@ export const translateApiMessageWithDefaultLocale = async (
 ): Promise<string> => {
   const context = (res && responseI18n.get(res)) || requestI18n.getStore();
   if (context?.translator) return translateWith(message, context.translator);
-  if (!defaultTranslatorFactory || !/^[A-Za-z][A-Za-z0-9_]*:/.test(message)) return message;
+  if (!defaultTranslatorFactory || !isApiI18nKey(message)) return message;
 
   try {
     return translateWith(message, await defaultTranslatorFactory());
@@ -84,16 +103,20 @@ export const translateApiMessageWithDefaultLocale = async (
  */
 export const createApiI18n = (resourceLoaders: ResourceLoaders): ApiI18n => {
   const translators = new Map<localeType, Promise<RequestTranslator>>();
+  // 默认语言（en）的 namespace 即应用注入的完整集合；缺失语言的资源由 server 层回退。
+  const namespaces = Object.keys(resourceLoaders[LangEnum.en] ?? {});
 
   /** 按语言缓存翻译函数；失败从缓存移除，下一次请求可重试。 */
   const getTranslator = (locale: localeType): Promise<RequestTranslator> => {
     let loading = translators.get(locale);
     if (!loading) {
+      const localeNamespaces = Object.keys(resourceLoaders[locale] ?? {});
       loading = import('./server')
         .then(({ createServerTranslator }) =>
           createServerTranslator({
             locale,
-            namespaces: Object.keys(resourceLoaders[locale]),
+            // 该语言缺少资源清单时沿用默认语言的 namespace，由 server 层按语言回退到 en。
+            namespaces: localeNamespaces.length > 0 ? localeNamespaces : namespaces,
             resourceLoaders
           })
         )
@@ -106,6 +129,9 @@ export const createApiI18n = (resourceLoaders: ResourceLoaders): ApiI18n => {
     return loading;
   };
 
+  // 登记可翻译 namespace：`isApiI18nKey` 据此区分真 key 与含冒号的普通文案。
+  // 空清单（测试或只注入部分语言的场景）不覆盖已登记的集合，避免误伤其他实例。
+  if (namespaces.length > 0) knownNamespaces = new Set(namespaces);
   // 后台出口（无请求上下文）使用默认语言；资源加载与请求链路共享同一份缓存。
   registerDefaultTranslatorFactory(() => getTranslator(LangEnum.en));
 

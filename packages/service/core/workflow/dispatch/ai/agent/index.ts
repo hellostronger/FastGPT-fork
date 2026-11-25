@@ -53,14 +53,11 @@ import { createAgentNodeResponseCollector } from './nodeResponseCollector';
 import { ensureAgentSandboxRuntime, type AgentSandboxPrepareAction } from './sub/sandbox/prepare';
 import { createAgentSubAppLookup, getWorkflowAgentLoopProvider } from './utils';
 import { workflowSseEvent } from '@fastgpt/global/core/workflow/runtime/sse';
-import { translateApiMessage } from '../../../../../common/i18n/request';
+import { isApiI18nKey, translateApiMessage } from '../../../../../common/i18n/request';
 import {
   resolveAgentRunFailedFallback,
   resolveAgentRunFailedNotice
 } from '../../../../../common/i18n/notice';
-
-/** i18n key 的命名空间形态（`ns:key`）；解析失败时不允许把这种文本写进用户可见正文。 */
-const I18N_KEY_PATTERN = /^[A-Za-z][A-Za-z0-9_]*:/;
 
 /**
  * 失败提示进入 SSE、聊天记录与节点详情前的统一本地化入口。
@@ -73,10 +70,13 @@ const localizeAgentErrorText = (text?: string) => (text ? translateApiMessage(te
  * 计算本轮要展示的失败提示：优先使用可本地化的错误原因，其次使用静态兜底文案。
  * 后台任务等没有请求上下文时由统一下发入口按默认语言解析，不再跳过提示，
  * 也不会把 `ns:key` 字面量写进正文（内部失败原因仍通过 `errorText` 暴露）。
+ *
+ * 判定必须是「已注入 namespace 的 key」：只看 `^ns:` 形态会把 `Failed: timeout`
+ * 这类带冒号的上游文案当成未解析 key 丢弃，用户反而看不到真实原因。
  */
 const resolveAgentErrorNoticeText = async (errorText?: string): Promise<string> => {
   const localizedError = localizeAgentErrorText(errorText);
-  if (localizedError && !I18N_KEY_PATTERN.test(localizedError)) return localizedError;
+  if (localizedError && !isApiI18nKey(localizedError)) return localizedError;
 
   return resolveAgentRunFailedFallback();
 };

@@ -1358,7 +1358,7 @@ describe('loadRequestMessages function tests', () => {
     });
 
     it('should drop an image part that fails to normalize and keep the remaining text', async () => {
-      getTestInstanceConfig().feature.multipleDataToBase64 = true;
+      multimediaEnv.MULTIPLE_DATA_TO_BASE64 = true;
       mockGetImageBase64.mockRejectedValue(new Error('download failed'));
       const messages: ChatCompletionMessageParam[] = [
         {
@@ -1379,7 +1379,7 @@ describe('loadRequestMessages function tests', () => {
     });
 
     it('should drop audio and video parts that fail to normalize and keep the remaining text', async () => {
-      getTestInstanceConfig().feature.multipleDataToBase64 = true;
+      multimediaEnv.MULTIPLE_DATA_TO_BASE64 = true;
       mockAxiosGet.mockRejectedValue(new Error('download failed'));
       const messages: ChatCompletionMessageParam[] = [
         {
@@ -1405,7 +1405,7 @@ describe('loadRequestMessages function tests', () => {
     });
 
     it('does not log raw media urls when dropping failed image/audio/video parts', async () => {
-      getTestInstanceConfig().feature.multipleDataToBase64 = true;
+      multimediaEnv.MULTIPLE_DATA_TO_BASE64 = true;
       const signedUrl = 'https://files.example.com/private/media.png?X-Amz-Signature=secret';
       const signedAudio = 'https://files.example.com/private/voice.mp3?token=secret';
       const signedVideo = 'https://files.example.com/private/clip.mp4?token=secret';
@@ -1463,7 +1463,7 @@ describe('loadRequestMessages function tests', () => {
     });
 
     it('rejects when the only media part fails to normalize', async () => {
-      getTestInstanceConfig().feature.multipleDataToBase64 = true;
+      multimediaEnv.MULTIPLE_DATA_TO_BASE64 = true;
       mockGetImageBase64.mockRejectedValue(new Error('download failed'));
 
       // 只有一张图片且读取失败：本轮没有可消费输入，不能退化成字符串 'null' 继续请求模型。
@@ -1486,7 +1486,7 @@ describe('loadRequestMessages function tests', () => {
     });
 
     it('keeps the request alive when only a historical turn has unreadable media', async () => {
-      getTestInstanceConfig().feature.multipleDataToBase64 = true;
+      multimediaEnv.MULTIPLE_DATA_TO_BASE64 = true;
       mockGetImageBase64.mockRejectedValue(new Error('download failed for history image'));
 
       // 历史轮次只有一张读取失败的图片，本轮是正常文本：历史消息只能降级丢弃，
@@ -1535,7 +1535,7 @@ describe('loadRequestMessages function tests', () => {
     });
 
     it('rejects when only the current turn media fails to normalize, even with history', async () => {
-      getTestInstanceConfig().feature.multipleDataToBase64 = true;
+      multimediaEnv.MULTIPLE_DATA_TO_BASE64 = true;
       mockGetImageBase64.mockRejectedValue(new Error('download failed for current image'));
 
       // 历史轮次正常，本轮只有一张读取失败的图片：没有可消费输入，抛既定 UserError。

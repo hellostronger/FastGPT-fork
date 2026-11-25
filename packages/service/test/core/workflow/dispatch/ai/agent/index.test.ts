@@ -1739,6 +1739,24 @@ describe('dispatchRunAgent user context', () => {
     expect(result.data.answerText).not.toContain('chat:');
   });
 
+  it('keeps readable error text that merely contains a colon', async () => {
+    const props = createProps();
+    delete props.params.agent_datasetParams;
+    runAgentLoopMock.mockResolvedValueOnce({
+      status: 'error',
+      // 上游/供应商文案常带冒号，但 namespace 不在应用注入集合内，不能被当成未解析 key 丢弃。
+      error: { message: 'Failed: upstream timeout' },
+      completeMessages: [],
+      assistantMessages: [],
+      requestIds: []
+    });
+
+    const result = await runWithLocale('zh-CN', () => dispatchRunAgent(props));
+
+    expect(result.data.answerText).toBe('Failed: upstream timeout');
+    expect(result.data.answerText).not.toBe(zhCNChat.agent_run_failed_fallback);
+  });
+
   it('does not stream the failure fallback when isResponseAnswerText is false', async () => {
     const props = createProps();
     props.params.isResponseAnswerText = false;

@@ -53,13 +53,18 @@ export const createServerTranslator = async <Namespace extends string>({
 
   /** 同一资源的并发请求等待同一个 Promise，失败仅清理该资源，保留其他已加载内容。 */
   const loadResource = (language: localeType, namespace: Namespace | 'common') => {
+    // 资源由调用方注入，语言或 namespace 可能缺失：跳过而不是让整个请求翻译失败，
+    // 缺失文案由 i18next 按 `fallbackLng: 'en'` 或原 key 兜底。
+    const loader = resourceLoaders[language]?.[namespace];
+    if (!loader) return Promise.resolve();
+
     const key = `${language}:${namespace}`;
     let loading = resourceLoads.get(key);
     if (!loading) {
       // 先登记 Promise，再执行加载器，同时兼容同步抛错与异步拒绝。
       loading = Promise.resolve()
         .then(async () => {
-          const { default: resource } = await resourceLoaders[language][namespace]();
+          const { default: resource } = await loader();
           instance.addResourceBundle(language, namespace, resource);
         })
         .catch((error) => {

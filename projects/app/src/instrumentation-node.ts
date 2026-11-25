@@ -83,6 +83,19 @@ export async function registerNodeInstrumentation() {
     const logger = getLogger(LogCategories.SYSTEM);
     logger.info('Starting system initialization...');
 
+    /**
+     * 注册 API 层 i18n 默认语言来源。
+     * 渠道回调、定时任务等后台路径没有 HTTP 请求上下文，`translateApiMessageWithDefaultLocale`
+     * 只有在这里注册过 translator 工厂后，才能把 `ns:key` 解析成可读文案而不是原样透出。
+     */
+    await runInitializationStep({
+      step: 'register-api-i18n',
+      action: async () => {
+        await import('@/service/common/i18n');
+      },
+      logger
+    });
+
     // 加载配置
     await runInitializationStep({
       step: 'system-start-callback',

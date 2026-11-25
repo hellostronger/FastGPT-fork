@@ -3,6 +3,7 @@ import { parseAllowedOrigins, withNextCors } from '@fastgpt/next/middle/cors';
 import type { NextApiRequest, NextApiResponse } from '@fastgpt/next/type';
 import { createApiEntry, type ApiHandler } from '@fastgpt/service/common/http/entry';
 import { serviceEnv } from '@fastgpt/service/env';
+import { apiI18n } from '@/service/common/i18n';
 
 type NextAPIOptions = {
   csrf?: boolean;
@@ -34,8 +35,19 @@ export const NextAPI = (
     }
   };
 
+  /**
+   * 在本轮请求的 i18n 上下文中执行业务 handler：
+   * 先把请求语言可用的 translator 绑定到 AsyncLocalStorage 与 res（异步回调也能读到），
+   * 业务里的 `translateApiMessage` 才能按本轮语言解析 i18n key，而不是原样返回 key。
+   * 资源加载失败只降级本次翻译，不影响业务处理。
+   */
+  const i18nHandlers = handlers.map(
+    (handler) => (req: NextApiRequest, res: NextApiResponse) =>
+      apiI18n({ req, res }, () => handler(req, res))
+  );
+
   return createApiEntry<NextApiRequest, NextApiResponse>({
     beforeCallback: [beforeRequest],
     redactQueryParams: options.redactQueryParams
-  })(...handlers);
+  })(...i18nHandlers);
 };
