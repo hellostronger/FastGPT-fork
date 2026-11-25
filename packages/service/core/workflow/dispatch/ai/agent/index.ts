@@ -53,6 +53,9 @@ import { createAgentNodeResponseCollector } from './nodeResponseCollector';
 import { ensureAgentSandboxRuntime, type AgentSandboxPrepareAction } from './sub/sandbox/prepare';
 import { createAgentSubAppLookup, getWorkflowAgentLoopProvider } from './utils';
 
+/** 失败且没有任何可读错误文本时的兜底气泡文案，保证节点详情与用户气泡不空白。 */
+const AGENT_ERROR_FALLBACK_TEXT = '本轮执行失败，请重试';
+
 export type DispatchAgentModuleProps = ModuleDispatchProps<{
   [NodeInputKeyEnum.userChatInput]: string;
 
@@ -108,7 +111,7 @@ type Response = DispatchNodeResultType<{
  */
 export const dispatchRunAgent = async (props: DispatchAgentModuleProps): Promise<Response> => {
   const {
-    node: { nodeId, inputs, catchError },
+    node: { nodeId, inputs },
     lang,
     histories,
     query,
@@ -272,7 +275,7 @@ export const dispatchRunAgent = async (props: DispatchAgentModuleProps): Promise
     return {
       model: agentModel.name,
       query: userChatInput,
-      ...(textOutput ? { textOutput } : {}),
+      ...(textOutput !== undefined ? { textOutput } : {}),
       ...(childResponseCount !== undefined ? { childResponseCount } : {}),
       ...(childrenResponses?.length ? { childrenResponses } : {}),
       ...(errorText !== undefined ? { errorText } : {})
@@ -526,9 +529,12 @@ export const dispatchRunAgent = async (props: DispatchAgentModuleProps): Promise
       }
     });
     // 4. 输出归一化。
-    // done 正常落 answer；error/aborted 在未开启异常捕获时转成可见文本，开启 catchError 时仅通过 errorText 分支暴露。
+    // done 正常落 answer；error/aborted 在未开启异常捕获时转成可见文本。开启 catchError 时
+    // 仍要走错误分支路由，但必须保留一段可见文本，避免用户侧气泡与节点详情都是空白。
     const finalTextForBubble =
-      coreResult.status === 'error' && catchError ? '' : outputSummary.finalText;
+      coreResult.status === 'error'
+        ? outputSummary.finalText || outputSummary.errorText || AGENT_ERROR_FALLBACK_TEXT
+        : outputSummary.finalText;
     const finalOutput = buildAgentLoopCoreFinalAssistantOutput({
       assistantResponses: outputSummary.assistantResponses,
       previousAssistantResponses,
@@ -577,7 +583,7 @@ export const dispatchRunAgent = async (props: DispatchAgentModuleProps): Promise
     const doneMemories = buildAgentMemories(buildClearedNodeMemories());
     const errorText = outputSummary.errorText ?? '';
     const doneNodeResponse = buildAgentNodeResponse({
-      textOutput: finalOutput.answerText,
+      textOutput: finalOutput.answerText || errorText || AGENT_ERROR_FALLBACK_TEXT,
       ...(coreResult.status === 'error' ? { errorText } : {})
     });
 
