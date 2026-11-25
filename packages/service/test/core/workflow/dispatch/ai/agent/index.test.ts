@@ -14,6 +14,12 @@ import { getRunningSandboxId } from '@fastgpt/service/core/ai/sandbox/utils/id';
 import { getSandboxRuntimeProfile } from '@fastgpt/service/core/ai/sandbox/application/runtime';
 import { createNodeSummary } from '@fastgpt/service/core/workflow/dispatch/utils/summary';
 import { runWithContext as runWithWorkflowContext } from '@fastgpt/service/core/workflow/utils/context';
+import { generatedLoaders } from '@fastgpt/web/i18n/resourceLoaders.generated';
+import { createApiI18n } from '@fastgpt/service/common/i18n/request';
+import enChat from '@fastgpt/web/i18n/en/chat.json';
+import zhCNChat from '@fastgpt/web/i18n/zh-CN/chat.json';
+import enCommon from '@fastgpt/web/i18n/en/common.json';
+import zhCNCommon from '@fastgpt/web/i18n/zh-CN/common.json';
 import { Readable } from 'node:stream';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -30,6 +36,36 @@ const runWithContext: typeof runWithWorkflowContext = (value, fn) =>
     },
     fn
   );
+
+/** 绑定服务端请求翻译上下文，模拟真实 API 入口（NextAPI）注入的语言能力。 */
+const withI18n = createApiI18n(generatedLoaders);
+const runWithLocale = <T>(
+  locale: 'en' | 'zh-CN' | 'zh-Hant' | 'ko-KR',
+  fn: () => T | Promise<T>
+): Promise<T> =>
+  withI18n(
+    {
+      req: { headers: { 'x-fastgpt-language': locale } } as any,
+      res: {} as any
+    },
+    fn
+  );
+
+/**
+ * 1.6.x 测试文件以动态 import 获取被测入口，并显式建立 workflow 上下文；
+ * 上游 PR 新增用例直接引用该名字，这里补一个同语义的顶层封装。
+ */
+const dispatchRunAgent = async (
+  props: Parameters<
+    typeof import('@fastgpt/service/core/workflow/dispatch/ai/agent').dispatchRunAgent
+  >[0]
+) =>
+  runWithContext({ mcpClientMemory: {} }, async () => {
+    const { dispatchRunAgent: run } = await import(
+      '@fastgpt/service/core/workflow/dispatch/ai/agent'
+    );
+    return run(props);
+  });
 
 const {
   runAgentLoopMock,
@@ -1284,7 +1320,7 @@ describe('dispatchRunAgent user context', () => {
     expect(doneResult[DispatchNodeResponseKeyEnum.assistantResponses]).toBeUndefined();
   });
 
-  it('does not append errorText to assistantResponses and marks master_agent_call errorCaptured when catchError is enabled on the node', async () => {
+  it('keeps the error text visible on the node and marks master_agent_call errorCaptured when catchError is enabled on the node', async () => {
     const { dispatchRunAgent } = await import('@fastgpt/service/core/workflow/dispatch/ai/agent');
     const publishedResponses: any[] = [];
     const props = createProps();
@@ -1332,11 +1368,16 @@ describe('dispatchRunAgent user context', () => {
     expect(result[DispatchNodeResponseKeyEnum.toolResponse]).toEqual({
       error: 'LLM request failed'
     });
+    // 错误分支路由不变，但可见文本必须保留：节点详情与用户气泡都不能空白。
+    expect(result[DispatchNodeResponseKeyEnum.nodeResponse]).toMatchObject({
+      textOutput: 'LLM request failed',
+      errorText: 'LLM request failed'
+    });
     expect(
       result[DispatchNodeResponseKeyEnum.assistantResponses].filter(
         (item: any) => !item.inputContext
       )
-    ).toEqual([]);
+    ).toEqual([{ text: { content: 'LLM request failed' } }]);
     expect(publishedResponses).toEqual([
       expect.objectContaining({
         moduleName: 'chat:master_agent_call',
@@ -1349,6 +1390,469 @@ describe('dispatchRunAgent user context', () => {
       errorCount: 0
     });
     expect(props.nodeSummary.errorText).toBeUndefined();
+
+    // 模型在输出正文前失败：错误文本此前只进了 assistantResponses，没有流式发出。
+    // 既有的 answer 流式出口必须补发同一段文本，且只发一次。
+    const streamedAnswers = props.workflowStreamResponse.mock.calls
+      .map(([event]: any[]) => event)
+      .filter((event: any) => event?.event === 'answer')
+      .map((event: any) => event.data?.choices?.[0]?.delta?.content)
+      .filter(Boolean);
+    expect(streamedAnswers).toEqual(['LLM request failed']);
+  });
+
+  it('streams only the unsent failure tail when body text was already streamed', async () => {
+    const props = createProps();
+    delete props.params.agent_datasetParams;
+    runAgentLoopMock.mockImplementationOnce(async ({ runtime }) => {
+      runtime.emitEvent({ type: 'answer_delta', text: 'partial answer' });
+      return {
+        status: 'error',
+        error: { message: 'upstream failed' },
+        completeMessages: [],
+        assistantMessages: [{ role: 'assistant', content: 'partial answer' }],
+        requestIds: []
+      };
+    });
+
+    const result = await dispatchRunAgent(props);
+
+    expect(result.data.answerText).toBe('partial answerupstream failed');
+    const streamedAnswers = props.workflowStreamResponse.mock.calls
+      .map(([event]: any[]) => event)
+      .filter((event: any) => event?.event === 'answer')
+      .map((event: any) => event.data?.choices?.[0]?.delta?.content)
+      .filter(Boolean);
+    // 已流出的正文不重复，只补发未发送的失败提示。
+    expect(streamedAnswers).toEqual(['partial answer', 'upstream failed']);
+  });
+
+  it('sends the failure notice as a standalone increment without resending parent or child text', async () => {
+    const props = createProps();
+    delete props.params.agent_datasetParams;
+    const parentCall = {
+      id: 'call_child',
+      type: 'function' as const,
+      function: { name: 'child_tool', arguments: '{}' }
+    };
+    runAgentLoopMock.mockImplementationOnce(async ({ runtime }) => {
+      // 父 Agent 已输出正文，并调用了子工具。
+      runtime.emitEvent({ type: 'llm_request_start', requestIndex: 1, modelName: 'gpt-5' });
+      runtime.emitEvent({ type: 'answer_delta', text: 'parent answer' });
+      runtime.emitEvent({
+        type: 'llm_request_end',
+        requestIndex: 1,
+        modelName: 'gpt-5',
+        requestId: 'req_parent',
+        finishReason: 'tool_calls',
+        toolCalls: [parentCall],
+        usages: [],
+        seconds: 0.1
+      });
+      // 子工具输出 displayOnly 正文。
+      runtime.emitEvent({
+        type: 'tool_run_end',
+        call: parentCall,
+        response: 'child result',
+        assistantResponses: [{ text: { content: 'child answer' } }],
+        seconds: 0.1
+      });
+      // 下一次模型请求失败。
+      return {
+        status: 'error',
+        error: { message: 'upstream failed' },
+        completeMessages: [],
+        assistantMessages: [{ role: 'assistant', content: 'parent answer' }],
+        requestIds: ['req_parent']
+      };
+    });
+
+    const result = await dispatchRunAgent(props);
+
+    // 聊天记录：父正文与子工具正文各出现一次，失败提示作为独立增量追加在最后。
+    const textValues = result[DispatchNodeResponseKeyEnum.assistantResponses]
+      .map((item: any) => item.text?.content)
+      .filter(Boolean);
+    expect(textValues).toEqual(['parent answer', 'child answer', 'upstream failed']);
+    expect(result.data.answerText).toBe('parent answerchild answerupstream failed');
+    expect(result[DispatchNodeResponseKeyEnum.nodeResponse]).toMatchObject({
+      textOutput: 'parent answerchild answerupstream failed'
+    });
+
+    // SSE：父正文只随模型输出流式发送一次，错误分支只补发失败提示，不再重发任何正文。
+    const streamedAnswers = props.workflowStreamResponse.mock.calls
+      .map(([event]: any[]) => event)
+      .filter((event: any) => event?.event === 'answer')
+      .map((event: any) => event.data?.choices?.[0]?.delta?.content)
+      .filter(Boolean);
+    expect(streamedAnswers).toEqual(['parent answer', 'upstream failed']);
+    // 失败提示在 SSE 与聊天记录中是同一段文本；父/子正文不会作为失败增量重发。
+    expect(streamedAnswers.at(-1)).toBe(textValues.at(-1));
+  });
+
+  it.each(['zh-CN', 'en'] as const)(
+    'masks the failure detail with a public localized notice in public share runs (%s)',
+    async (locale) => {
+      const props = createProps();
+      delete props.params.agent_datasetParams;
+      // 匿名分享 / 免登录外链。
+      props.isPublicShare = true;
+      props.node.catchError = true;
+      const sensitiveError = 'OpenAI 401 invalid api key sk-test-123 (request id req_9f8e7d)';
+      runAgentLoopMock.mockResolvedValueOnce({
+        status: 'error',
+        error: { message: sensitiveError },
+        completeMessages: [],
+        assistantMessages: [],
+        requestIds: []
+      });
+
+      const result = await runWithLocale(locale, () => dispatchRunAgent(props));
+
+      const expectedNotice =
+        locale === 'en' ? enChat.agent_run_failed_notice : zhCNChat.agent_run_failed_notice;
+      // 进入 assistantResponses（公开历史会保留普通答复）的失败提示只能是通用文案。
+      const visibleText = result[DispatchNodeResponseKeyEnum.assistantResponses]
+        .map((item: any) => item.text?.content)
+        .filter(Boolean)
+        .join('');
+      expect(visibleText).toBe(expectedNotice);
+      expect(result.data.answerText).toBe(expectedNotice);
+      expect(result[DispatchNodeResponseKeyEnum.nodeResponse]).toMatchObject({
+        textOutput: expectedNotice
+      });
+
+      // SSE answer 与聊天记录同源同文本。
+      const streamedAnswers = props.workflowStreamResponse.mock.calls
+        .map(([event]: any[]) => event)
+        .filter((event: any) => event?.event === 'answer')
+        .map((event: any) => event.data?.choices?.[0]?.delta?.content)
+        .filter(Boolean);
+      expect(streamedAnswers).toEqual([expectedNotice]);
+
+      // 公开可见文本不得包含任何上游错误原文、URL 或状态码。
+      expect(visibleText).not.toContain('sk-test-123');
+      expect(visibleText).not.toContain('req_9f8e7d');
+      expect(visibleText).not.toContain('401');
+      expect(streamedAnswers.join('')).not.toContain(sensitiveError);
+
+      // 内部排查信息与错误分支保持原样。
+      expect(result.error).toEqual({ system_error_text: sensitiveError });
+      expect(result[DispatchNodeResponseKeyEnum.nodeResponse]).toMatchObject({
+        errorText: sensitiveError
+      });
+    }
+  );
+
+  it('uses the public notice for public share runs without any error text', async () => {
+    const props = createProps();
+    delete props.params.agent_datasetParams;
+    props.isPublicShare = true;
+    runAgentLoopMock.mockResolvedValueOnce({
+      status: 'error',
+      error: undefined,
+      completeMessages: [],
+      assistantMessages: [],
+      requestIds: []
+    });
+
+    const result = await runWithLocale('zh-CN', () => dispatchRunAgent(props));
+
+    const visibleText = result[DispatchNodeResponseKeyEnum.assistantResponses]
+      .map((item: any) => item.text?.content)
+      .filter(Boolean)
+      .join('');
+    expect(visibleText).toBe(zhCNChat.agent_run_failed_notice);
+    expect(result.data.answerText).toBe(zhCNChat.agent_run_failed_notice);
+    // 公开上下文也不允许回落到内部兜底 key 的字面量。
+    expect(visibleText).not.toContain('chat:');
+  });
+
+  it('resolves the public notice with the default locale without a request context', async () => {
+    const props = createProps();
+    delete props.params.agent_datasetParams;
+    props.isPublicShare = true;
+    const sensitiveError = 'upstream secret detail sk-test-123';
+    runAgentLoopMock.mockResolvedValueOnce({
+      status: 'error',
+      error: { message: sensitiveError },
+      completeMessages: [],
+      assistantMessages: [],
+      requestIds: []
+    });
+
+    // 后台/渠道等无请求翻译上下文：不能跳过提示，也不能输出 i18n key 字面量。
+    const result = await dispatchRunAgent(props);
+
+    const visibleText = result[DispatchNodeResponseKeyEnum.assistantResponses]
+      .map((item: any) => item.text?.content)
+      .filter(Boolean)
+      .join('');
+    expect(visibleText).toBe(enChat.agent_run_failed_notice);
+    expect(visibleText).not.toContain('chat:');
+    expect(visibleText).not.toContain(sensitiveError);
+    // 内部诊断字段仍保留原始错误。
+    expect(result.error).toEqual({ system_error_text: sensitiveError });
+    expect(result[DispatchNodeResponseKeyEnum.nodeResponse]).toMatchObject({
+      errorText: sensitiveError
+    });
+  });
+
+  it('resolves the internal fallback notice with the default locale without a request context', async () => {
+    const props = createProps();
+    delete props.params.agent_datasetParams;
+    runAgentLoopMock.mockResolvedValueOnce({
+      status: 'error',
+      error: { message: 'chat:agent_run_failed_fallback' },
+      completeMessages: [],
+      assistantMessages: [],
+      requestIds: []
+    });
+
+    const result = await dispatchRunAgent(props);
+
+    expect(result.data.answerText).toBe(enChat.agent_run_failed_fallback);
+    expect(result.data.answerText).not.toContain('chat:');
+  });
+
+  it('keeps the localized error visible but preserves the raw detail for non-share runs', async () => {
+    const props = createProps();
+    delete props.params.agent_datasetParams;
+    const sensitiveError = 'OpenAI 401 invalid api key sk-test-123 (request id req_9f8e7d)';
+    runAgentLoopMock.mockResolvedValueOnce({
+      status: 'error',
+      error: { message: sensitiveError },
+      completeMessages: [],
+      assistantMessages: [],
+      requestIds: []
+    });
+
+    const result = await runWithLocale('zh-CN', () => dispatchRunAgent(props));
+
+    // 内部上下文沿用上一轮行为：可见文本是本地化后的错误原因，不泄漏 i18n key。
+    expect(result.data.answerText).toBe(sensitiveError);
+    expect(result.data.answerText).not.toContain('chat:');
+    // 原始错误仍保留在节点详情中，供权限受控的排查使用。
+    expect(result[DispatchNodeResponseKeyEnum.nodeResponse]).toMatchObject({
+      textOutput: sensitiveError,
+      errorText: sensitiveError
+    });
+  });
+
+  it('appends only the public notice after parent and child text in public share runs', async () => {
+    const props = createProps();
+    delete props.params.agent_datasetParams;
+    props.isPublicShare = true;
+    const parentCall = {
+      id: 'call_child',
+      type: 'function' as const,
+      function: { name: 'child_tool', arguments: '{}' }
+    };
+    runAgentLoopMock.mockImplementationOnce(async ({ runtime }) => {
+      runtime.emitEvent({ type: 'llm_request_start', requestIndex: 1, modelName: 'gpt-5' });
+      runtime.emitEvent({ type: 'answer_delta', text: 'parent answer' });
+      runtime.emitEvent({
+        type: 'llm_request_end',
+        requestIndex: 1,
+        modelName: 'gpt-5',
+        requestId: 'req_parent',
+        finishReason: 'tool_calls',
+        toolCalls: [parentCall],
+        usages: [],
+        seconds: 0.1
+      });
+      runtime.emitEvent({
+        type: 'tool_run_end',
+        call: parentCall,
+        response: 'child result',
+        assistantResponses: [{ text: { content: 'child answer' } }],
+        seconds: 0.1
+      });
+      return {
+        status: 'error',
+        error: { message: 'upstream secret detail' },
+        completeMessages: [],
+        assistantMessages: [{ role: 'assistant', content: 'parent answer' }],
+        requestIds: ['req_parent']
+      };
+    });
+
+    const result = await runWithLocale('zh-CN', () => dispatchRunAgent(props));
+
+    const textValues = result[DispatchNodeResponseKeyEnum.assistantResponses]
+      .map((item: any) => item.text?.content)
+      .filter(Boolean);
+    expect(textValues).toEqual(['parent answer', 'child answer', zhCNChat.agent_run_failed_notice]);
+
+    const streamedAnswers = props.workflowStreamResponse.mock.calls
+      .map(([event]: any[]) => event)
+      .filter((event: any) => event?.event === 'answer')
+      .map((event: any) => event.data?.choices?.[0]?.delta?.content)
+      .filter(Boolean);
+    expect(streamedAnswers).toEqual(['parent answer', zhCNChat.agent_run_failed_notice]);
+    expect(streamedAnswers.join('')).not.toContain('upstream secret detail');
+  });
+
+  it.each([
+    ['zh-CN', 'chat:LLM_model_response_empty', zhCNChat.LLM_model_response_empty],
+    [
+      'zh-CN',
+      'common:core.chat.error.File read failed',
+      zhCNCommon['core.chat.error.File read failed']
+    ],
+    ['en', 'chat:LLM_model_response_empty', enChat.LLM_model_response_empty],
+    ['en', 'common:core.chat.error.File read failed', enCommon['core.chat.error.File read failed']]
+  ] as const)(
+    'translates the failure i18n key before it reaches SSE and textOutput (%s / %s)',
+    async (locale, errorKey, expected) => {
+      const props = createProps();
+      delete props.params.agent_datasetParams;
+      runAgentLoopMock.mockResolvedValueOnce({
+        status: 'error',
+        error: { message: errorKey },
+        completeMessages: [],
+        assistantMessages: [],
+        requestIds: []
+      });
+
+      const result = await runWithLocale(locale, () => dispatchRunAgent(props));
+
+      const textOutput = result[DispatchNodeResponseKeyEnum.nodeResponse].textOutput;
+      expect(textOutput).toBe(expected);
+      expect(result.data.answerText).toBe(expected);
+      // key 字面量不能泄漏到节点输出或聊天记录。
+      expect(textOutput).not.toContain('chat:LLM_model_response_empty');
+      expect(textOutput).not.toContain('common:core.chat.error');
+      expect(result.data.answerText).not.toContain(':');
+
+      const streamedAnswers = props.workflowStreamResponse.mock.calls
+        .map(([event]: any[]) => event)
+        .filter((event: any) => event?.event === 'answer')
+        .map((event: any) => event.data?.choices?.[0]?.delta?.content)
+        .filter(Boolean);
+      expect(streamedAnswers).toEqual([expected]);
+      expect(streamedAnswers.join('')).not.toContain(errorKey.split(':')[0] + ':');
+    }
+  );
+
+  it('does not leak unresolved i18n keys when there is no request translation context', async () => {
+    const props = createProps();
+    delete props.params.agent_datasetParams;
+    runAgentLoopMock.mockResolvedValueOnce({
+      status: 'error',
+      error: { message: 'chat:LLM_model_response_empty' },
+      completeMessages: [],
+      assistantMessages: [],
+      requestIds: []
+    });
+
+    // 后台任务没有请求翻译上下文，宁可不展示提示，也不能把 `chat:xxx` 写进正文。
+    const result = await dispatchRunAgent(props);
+
+    const textOutput = result[DispatchNodeResponseKeyEnum.nodeResponse].textOutput;
+    expect(textOutput).not.toContain('chat:LLM_model_response_empty');
+    expect(result.data.answerText).not.toContain('chat:');
+  });
+
+  it('keeps readable error text that merely contains a colon', async () => {
+    const props = createProps();
+    delete props.params.agent_datasetParams;
+    runAgentLoopMock.mockResolvedValueOnce({
+      status: 'error',
+      // 上游/供应商文案常带冒号，但 namespace 不在应用注入集合内，不能被当成未解析 key 丢弃。
+      error: { message: 'Failed: upstream timeout' },
+      completeMessages: [],
+      assistantMessages: [],
+      requestIds: []
+    });
+
+    const result = await runWithLocale('zh-CN', () => dispatchRunAgent(props));
+
+    expect(result.data.answerText).toBe('Failed: upstream timeout');
+    expect(result.data.answerText).not.toBe(zhCNChat.agent_run_failed_fallback);
+  });
+
+  it('does not stream the failure fallback when isResponseAnswerText is false', async () => {
+    const props = createProps();
+    props.params.isResponseAnswerText = false;
+    delete props.params.agent_datasetParams;
+    runAgentLoopMock.mockResolvedValueOnce({
+      status: 'error',
+      error: undefined,
+      completeMessages: [],
+      assistantMessages: [],
+      requestIds: []
+    });
+
+    const result = await runWithLocale('zh-CN', () => dispatchRunAgent(props));
+
+    // 静默配置仍保留节点输出文本，但不得向 SSE 推送兜底提示。
+    expect(result.data.answerText).toBe(zhCNChat.agent_run_failed_fallback);
+    const streamedAnswers = props.workflowStreamResponse.mock.calls
+      .map(([event]: any[]) => event)
+      .filter((event: any) => event?.event === 'answer');
+    expect(streamedAnswers).toEqual([]);
+  });
+
+  it('falls back to a readable error text when the failed run has no error message', async () => {
+    const props = createProps();
+    delete props.params.agent_datasetParams;
+    props.nodeResponseParentId = 'workflow_agent_resp_id';
+    props.nodeResponseSink = {
+      publish: vi.fn(async (inputs: Array<{ response: any }>) =>
+        inputs.map((input) => input.response)
+      )
+    };
+    runAgentLoopMock.mockResolvedValueOnce({
+      status: 'error',
+      error: undefined,
+      completeMessages: [],
+      assistantMessages: [],
+      requestIds: []
+    });
+
+    const result = await runWithLocale('zh-CN', () =>
+      runWithContext({ mcpClientMemory: {} }, () => dispatchRunAgent(props))
+    );
+
+    // 错误路由不变：仍然返回 error 字段并让节点走失败分支。
+    const fallbackText = zhCNChat.agent_run_failed_fallback;
+    expect(result.error).toEqual({ system_error_text: '' });
+    expect(result[DispatchNodeResponseKeyEnum.nodeResponse]).toMatchObject({
+      textOutput: fallbackText
+    });
+    expect(result.data.answerText).toBe(fallbackText);
+
+    // 兜底提示也必须通过既有 answer 流式出口补发一次，前端气泡才不会空白。
+    const streamedAnswers = props.workflowStreamResponse.mock.calls
+      .map(([event]: any[]) => event)
+      .filter((event: any) => event?.event === 'answer')
+      .map((event: any) => event.data?.choices?.[0]?.delta?.content)
+      .filter(Boolean);
+    expect(streamedAnswers).toEqual([fallbackText]);
+  });
+
+  it('localizes the failure fallback by the run locale', async () => {
+    const props = createProps();
+    props.lang = 'en';
+    delete props.params.agent_datasetParams;
+    runAgentLoopMock.mockResolvedValueOnce({
+      status: 'error',
+      error: undefined,
+      completeMessages: [],
+      assistantMessages: [],
+      requestIds: []
+    });
+
+    const result = await runWithLocale('en', () =>
+      runWithContext({ mcpClientMemory: {} }, () => dispatchRunAgent(props))
+    );
+
+    expect(result[DispatchNodeResponseKeyEnum.nodeResponse]).toMatchObject({
+      textOutput: enChat.agent_run_failed_fallback
+    });
+    expect(result.data.answerText).toBe(enChat.agent_run_failed_fallback);
+    expect(result.data.answerText).not.toBe(zhCNChat.agent_run_failed_fallback);
   });
 
   it('publishes Agent internal responses as current-layer top-level rows', async () => {

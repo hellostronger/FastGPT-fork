@@ -52,6 +52,42 @@ import { createWorkflowAgentLoopRuntime } from './adapter/runtime';
 import { createAgentNodeResponseCollector } from './nodeResponseCollector';
 import { ensureAgentSandboxRuntime, type AgentSandboxPrepareAction } from './sub/sandbox/prepare';
 import { createAgentSubAppLookup, getWorkflowAgentLoopProvider } from './utils';
+import { workflowSseEvent } from '@fastgpt/global/core/workflow/runtime/sse';
+import { isApiI18nKey, translateApiMessage } from '../../../../../common/i18n/request';
+import {
+  resolveAgentRunFailedFallback,
+  resolveAgentRunFailedNotice
+} from '../../../../../common/i18n/notice';
+
+/**
+ * 失败提示进入 SSE、聊天记录与节点详情前的统一本地化入口。
+ * 复用服务端请求翻译上下文（`translateApiMessage`）按本轮语言解析 i18n key；
+ * 供应商原始错误（非 key）原样保留。
+ */
+const localizeAgentErrorText = (text?: string) => (text ? translateApiMessage(text) : '');
+
+/**
+ * 计算本轮要展示的失败提示：优先使用可本地化的错误原因，其次使用静态兜底文案。
+ * 后台任务等没有请求上下文时由统一下发入口按默认语言解析，不再跳过提示，
+ * 也不会把 `ns:key` 字面量写进正文（内部失败原因仍通过 `errorText` 暴露）。
+ *
+ * 判定必须是「已注入 namespace 的 key」：只看 `^ns:` 形态会把 `Failed: timeout`
+ * 这类带冒号的上游文案当成未解析 key 丢弃，用户反而看不到真实原因。
+ */
+const resolveAgentErrorNoticeText = async (errorText?: string): Promise<string> => {
+  const localizedError = localizeAgentErrorText(errorText);
+  if (localizedError && !isApiI18nKey(localizedError)) return localizedError;
+
+  return resolveAgentRunFailedFallback();
+};
+
+/**
+ * 公开上下文（匿名分享 / 免登录外链）固定使用的失败提示。
+ * 分享历史会保留普通答复、SSE 的 `answer` 也对外可见，因此只能发送与内部错误无关的
+ * 静态本地化文案，不能拼接 `errorText`、URL 或状态码；无请求上下文时按默认语言解析。
+ * 内部排查仍走 `nodeResponse.errorText` 与工作流异常分支。
+ */
+const resolvePublicAgentErrorNoticeText = (): Promise<string> => resolveAgentRunFailedNotice();
 
 export type DispatchAgentModuleProps = ModuleDispatchProps<{
   [NodeInputKeyEnum.userChatInput]: string;
@@ -108,7 +144,7 @@ type Response = DispatchNodeResultType<{
  */
 export const dispatchRunAgent = async (props: DispatchAgentModuleProps): Promise<Response> => {
   const {
-    node: { nodeId, inputs, catchError },
+    node: { nodeId, inputs },
     lang,
     histories,
     query,
@@ -272,7 +308,7 @@ export const dispatchRunAgent = async (props: DispatchAgentModuleProps): Promise
     return {
       model: agentModel.name,
       query: userChatInput,
-      ...(textOutput ? { textOutput } : {}),
+      ...(textOutput !== undefined ? { textOutput } : {}),
       ...(childResponseCount !== undefined ? { childResponseCount } : {}),
       ...(childrenResponses?.length ? { childrenResponses } : {}),
       ...(errorText !== undefined ? { errorText } : {})
@@ -527,13 +563,24 @@ export const dispatchRunAgent = async (props: DispatchAgentModuleProps): Promise
       }
     });
     // 4. 输出归一化。
-    // done 正常落 answer；error/aborted 在未开启异常捕获时转成可见文本，开启 catchError 时仅通过 errorText 分支暴露。
-    const finalTextForBubble =
-      coreResult.status === 'error' && catchError ? '' : outputSummary.finalText;
+    // 正常结束：模型正文即回复正文。
+    // 失败/中断：只在既有助手输出之后追加一条「独立的失败提示」，不再把模型正文与错误
+    // 文本拼成整段再做前缀比较——历史/子工具正文会参与比较，导致父正文被重发。
+    // 公开上下文（匿名分享/免登录外链）只给可公开的通用本地化提示；内部上下文保留
+    // 上一轮「本地化错误原因、其次静态兜底」的行为，原始错误仍写入 nodeResponse.errorText。
+    const errorNoticeText =
+      coreResult.status !== 'error'
+        ? ''
+        : props.isPublicShare === true
+          ? await resolvePublicAgentErrorNoticeText()
+          : await resolveAgentErrorNoticeText(outputSummary.errorText);
     const finalOutput = buildAgentLoopCoreFinalAssistantOutput({
       assistantResponses: outputSummary.assistantResponses,
       previousAssistantResponses,
-      finalText: finalTextForBubble,
+      // 失败轮次的模型正文已由 core 写入 assistantResponses 并完成流式推送，这里不再补写，
+      // 避免任何已发出的正文重复进入聊天记录或 SSE。
+      finalText: coreResult.status === 'error' ? undefined : outputSummary.finalText,
+      errorNoticeText,
       reasoningText: outputSummary.reasoningText,
       hideReason: aiChatReasoning === false
     });
@@ -577,7 +624,15 @@ export const dispatchRunAgent = async (props: DispatchAgentModuleProps): Promise
 
     const doneMemories = buildAgentMemories(buildClearedNodeMemories());
     const errorText = outputSummary.errorText ?? '';
+
+    // 失败提示作为独立增量：同一次输出组装既写入 assistantResponses（聊天记录/节点详情），
+    // 也在这里通过既有流式出口发送一次，保证两边文本一致且不会重发已流出的正文。
+    if (errorNoticeText && isResponseAnswerText !== false) {
+      workflowStreamResponse?.(workflowSseEvent.answerDelta(errorNoticeText));
+    }
+
     const doneNodeResponse = buildAgentNodeResponse({
+      // 失败提示已包含在 answerText 内；正常结束的空答案保持原样，避免误报执行失败。
       textOutput: finalOutput.answerText,
       ...(coreResult.status === 'error' ? { errorText } : {})
     });

@@ -411,6 +411,8 @@ async function handler(req: NextApiRequest, res: NextApiResponse) {
       histories: newHistories,
       stream,
       retainDatasetCite: workflowRetainDatasetCite,
+      // 匿名分享链接的运行属于公开上下文：答复会被分享历史保留给匿名访问者。
+      isPublicShare: !!shareId,
       showSkillReferences: finalShowSkillReferences,
       maxRunTimes: WORKFLOW_MAX_RUN_TIMES,
       workflowStreamResponse: workflowResponseWrite,

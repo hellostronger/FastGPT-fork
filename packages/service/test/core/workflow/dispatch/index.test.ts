@@ -15,6 +15,7 @@ import {
 import { getWorkflowNodeRunParams } from '@fastgpt/service/core/workflow/dispatch/utils/runtime';
 import { createClientAbortTracker } from '@fastgpt/service/core/workflow/dispatch/utils/clientAbort';
 import { getWorkflowResponseWrite } from '@fastgpt/service/core/workflow/dispatch/utils';
+import { initWorkflowSseResponse } from '@fastgpt/service/core/workflow/utils/streamResponseContext';
 import { createNode, createEdge } from '../utils';
 import {
   NodeInputKeyEnum,
@@ -179,6 +180,112 @@ describe('dispatchWorkFlow explicit stop lifecycle', () => {
     await new Promise((resolve) => setTimeout(resolve, 150));
     expect(read).toHaveBeenCalledTimes(count);
   });
+});
+
+describe('dispatchWorkFlow entry context isolation', () => {
+  it.each([
+    [true, true],
+    [false, true],
+    [true, undefined],
+    [false, undefined]
+  ] as const)(
+    'stream=%s isPublicShare=%s 时只把公开标记按需透传到 Agent 节点',
+    async (stream, publicShare) => {
+      // 1.6.x 无 `getUser` 夹具与 `resolveSystemInstanceConfig`，直接使用固定 ID，
+      // 并由调用方显式传入 `maxRunTimes`。
+      const teamId = '654a4107c32f3bf5f998452f';
+      const tmbId = '65ab7007462ada7dbb899948';
+      const points = vi.spyOn(teamLimit, 'checkTeamAIPoints').mockResolvedValue(undefined);
+      const req = Object.assign(new EventEmitter(), {
+        aborted: false,
+        socket: new EventEmitter()
+      });
+      const res = Object.assign(new EventEmitter(), {
+        closed: false,
+        destroyed: false,
+        writableEnded: false,
+        writableFinished: false,
+        headersSent: false,
+        setHeader: vi.fn(),
+        end: vi.fn()
+      });
+      const workflowStreamResponse = getWorkflowResponseWrite({
+        res: res as any,
+        detail: true,
+        streamResponse: stream
+      });
+      initWorkflowSseResponse({ res: res as any, stream, responseWrite: workflowStreamResponse });
+
+      const node = createNode('public-share-node', FlowNodeTypeEnum.agent);
+      node.isEntry = true;
+      const executionContexts: Record<string, unknown>[] = [];
+      const callback = vi
+        .spyOn(callbackMap, FlowNodeTypeEnum.agent)
+        .mockImplementation(async (props) => {
+          executionContexts.push(props);
+          return {};
+        });
+
+      try {
+        await dispatchWorkFlow({
+          req: req as any,
+          res: res as any,
+          apiVersion: 'v1',
+          responseAllData: stream,
+          responseDetail: !stream,
+          mode: 'test',
+          uid: tmbId,
+          runningAppInfo: {
+            sourceType: ChatSourceTypeEnum.app,
+            sourceId: '507f1f77bcf86cd799439121',
+            teamId,
+            tmbId,
+            name: 'Public share propagation'
+          },
+          runningUserInfo: {
+            username: 'test-user',
+            teamName: 'Test team',
+            memberName: 'Test member',
+            contact: '',
+            teamId,
+            tmbId,
+            externalProvider: {}
+          },
+          chatId: 'public-share-chat',
+          responseChatItemId: 'public-share-response',
+          histories: [],
+          query: [],
+          variables: {},
+          runtimeNodes: [node],
+          runtimeEdges: [],
+          maxFileAmount: 5,
+          maxBytesPerFile: 1024,
+          stream,
+          workflowStreamResponse,
+          maxRunTimes: 2,
+          concatUsage: vi.fn(),
+          defaultSkipNodeQueue: [],
+          // 入口透传公开标记：undefined/false 不挂载键，true 挂载为 true。
+          isPublicShare: publicShare,
+          nodeResponseWriteConfig: { persistToDb: false, retainInMemory: false },
+          resourceContext: { teamId, isRoot: false, resourceMap: new Map() }
+        } as any);
+
+        expect(executionContexts).toHaveLength(1);
+        if (publicShare === true) {
+          expect(executionContexts[0].isPublicShare).toBe(true);
+          expect(Object.keys(executionContexts[0])).toContain('isPublicShare');
+        } else {
+          // 节点入参保持精确键集：未开启公开上下文时不能出现 undefined 键。
+          expect(Object.keys(executionContexts[0])).not.toContain('isPublicShare');
+        }
+      } finally {
+        callback.mockRestore();
+        points.mockRestore();
+        res.emit('close');
+      }
+    }
+  );
 });
 
 describe('createClientAbortTracker', () => {
