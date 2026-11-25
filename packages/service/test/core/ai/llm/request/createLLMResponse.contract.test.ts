@@ -1097,13 +1097,49 @@ describe('createLLMResponse HTTP/SSE contract', () => {
       });
       expect(result.error).toBeUndefined();
       expect(result.finish_reason).toBe('close');
-      expect(result.toolCalls?.[0].function.arguments).toBe('{"q":');
+      // 中断后未完成的调用不得出现在返回值里。
+      expect(result.toolCalls ?? []).toEqual([]);
       expect(result.usage).toMatchObject({ inputTokens: 17, outputTokens: 4 });
       expect(onToolCall).toHaveBeenCalledTimes(1);
       expect(onToolParam).not.toHaveBeenCalled();
       const record = await readRecord(result.requestId);
       expect(record.response.finish_reason).toBe('close');
-      expect(record.response.toolCalls).toEqual(result.toolCalls);
+      // 落库记录同样不能保留未完成调用。
+      expect(record.response.toolCalls ?? []).toEqual([]);
+      expect(record.response.usage).toMatchObject({ inputTokens: 17, outputTokens: 4 });
+    });
+
+    it('drops unfinished tool calls when abort lands right before EOF without a further chunk', async () => {
+      // 只推送一段半截参数，随后上游直接 EOF：不会再有任何 chunk 触发循环内的停止检查。
+      rounds.push({
+        chunks: [usageChunk, toolChunk({ index: 0, id: 'a', name: 'search', args: '{"q":' })],
+        omitDone: true,
+        wireMode: 'coalesced'
+      });
+      let aborted = false;
+      const onToolCall = vi.fn(() => {
+        aborted = true;
+      });
+      const onToolParam = vi.fn();
+      const result = await createLLMResponse({
+        teamId,
+        throwError: false,
+        body: body(true),
+        isAborted: () => aborted,
+        onToolCall,
+        onToolParam
+      });
+      expect(result.error).toBeUndefined();
+      expect(result.finish_reason).toBe('close');
+      expect(result.toolCalls ?? []).toEqual([]);
+      expect(result.usage).toMatchObject({ inputTokens: 17, outputTokens: 4 });
+      expect(onToolCall).toHaveBeenCalledTimes(1);
+      expect(onToolParam).not.toHaveBeenCalled();
+      const record = await readRecord(result.requestId);
+      expect(record.response.finish_reason).toBe('close');
+      expect(record.response.toolCalls ?? []).toEqual([]);
+      // 落库内容里不得残留半截参数。
+      expect(JSON.stringify(record.response)).not.toContain('"q"');
       expect(record.response.usage).toMatchObject({ inputTokens: 17, outputTokens: 4 });
     });
 

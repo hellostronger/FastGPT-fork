@@ -9,7 +9,6 @@ import { parseLLMStreamResponse } from '../../../utils';
 import { parsePromptToolCall } from '../../promptCall';
 import type { CompleteParams, CompleteResponse, CreateLLMResponseProps } from '../types';
 import { normalizeNativeToolCalls, normalizeToolName } from './normalize';
-import { sanitizeToolArguments } from '@fastgpt/global/core/chat/toolCallArgs';
 import type { AIApiRequestMeta } from '../../../config';
 import { createUserKeyError } from '../createChatCompletion';
 
@@ -70,6 +69,15 @@ export const createStreamResponse = async ({
     } catch (error: any) {
       // 包含读取和消费回调异常，先保留 parser 状态，再由上层决定是否抛出。
       updateError(error?.error || error);
+    } finally {
+      // 流结束边界再确认一次最终停止状态：若停止信号在半截参数之后才转真、且上游
+      // 没有后续 chunk 直接 EOF，循环不会再进入下一轮检查，必须在这里兜底。
+      // 否则半截 tool call 会按正常结果返回并落库，调用方也会把结束判为 abnormal_close。
+      if (isAborted?.() && !aborted) {
+        aborted = true;
+        updateFinishReason('close');
+        response.controller?.abort();
+      }
     }
   };
 
@@ -174,17 +182,12 @@ export const createStreamResponse = async ({
         reasoningText: reasoningContent,
         usage,
         finish_reason,
-        toolCalls: toolCallError
-          ? []
-          : aborted
+        // 中断时丢弃未完成调用；正常结束直接返回原始参数，不做任何改写，
+        // 保证工具校验、长度截断、上游异常等契约与修复前一致。
+        toolCalls:
+          toolCallError || aborted
             ? []
-            : normalizeNativeToolCalls({ toolCalls: mergedToolCalls, toolNames }).map((call) => ({
-                ...call,
-                function: {
-                  ...call.function,
-                  arguments: sanitizeToolArguments(call.function.arguments)
-                }
-              }))
+            : normalizeNativeToolCalls({ toolCalls: mergedToolCalls, toolNames })
       };
     } else {
       let startResponseWrite = false;
@@ -229,16 +232,8 @@ export const createStreamResponse = async ({
       // prompt tool 模式结束后用完整文本解析最终回答和工具调用。
       const { answer: llmAnswer, streamAnswer, toolCalls } = parsePromptToolCall(content);
 
-      // 中断或残缺的 prompt 协议不能产出半截调用；参数统一收敛为合法 JSON。
-      const finalToolCalls = aborted
-        ? undefined
-        : toolCalls?.map((call) => ({
-            ...call,
-            function: {
-              ...call.function,
-              arguments: sanitizeToolArguments(call.function.arguments)
-            }
-          }));
+      // 中断的 prompt 协议不能产出半截调用；其余情况保留解析器原始参数。
+      const finalToolCalls = aborted ? undefined : toolCalls;
 
       if (streamAnswer) {
         onStreaming?.({ text: streamAnswer });

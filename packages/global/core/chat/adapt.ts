@@ -22,7 +22,7 @@ import type {
 } from '../ai/llm/type';
 import { ChatCompletionRequestMessageRoleEnum } from '../../core/ai/constants';
 import { normalizeToolResponseContent } from '../ai/llm/utils';
-import { sanitizeToolArguments, sanitizeToolCallMessages } from './toolCallArgs';
+import { reconcileToolCallMessages } from './toolCallArgs';
 import { getUserChatSelect, formatUserChatSelect, userChatSelect2RuntimeText } from './input/utils';
 import {
   getWorkflowBuilderPreview,
@@ -368,8 +368,17 @@ export const chats2GPTMessages = ({
   const isNonEmptyString = (value: unknown): value is string =>
     typeof value === 'string' && value.trim().length > 0;
 
-  /** 历史里可能残留中断产生的半截 arguments，回放前必须保证是合法 JSON。 */
-  const normalizeToolArguments = (params: unknown) => sanitizeToolArguments(params);
+  const normalizeToolArguments = (params: unknown) => {
+    if (typeof params === 'string') {
+      return params || '{}';
+    }
+
+    try {
+      return JSON.stringify(params ?? {});
+    } catch {
+      return '{}';
+    }
+  };
 
   type NormalizedChatToolContext = {
     toolCall: ChatCompletionMessageToolCall;
@@ -826,8 +835,17 @@ export const chats2GPTMessages = ({
     }
   });
 
-  // 回放前统一兜底：历史中的半截 tool arguments 会直接导致上游 400，必须在此收敛。
-  return sanitizeToolCallMessages(results);
+  // 回放前统一兜底：历史上被中断落库的半截 tool arguments 会直接导致上游 400。
+  // 这里只做结构收敛（剔除非法 tool call 及其配对 role:tool），不回写历史；
+  // dropped 仅用于观测，日志只记录工具名/原因/参数长度，不打印参数内容。
+  const { messages: reconciled, dropped } = reconcileToolCallMessages(results);
+  if (dropped.length > 0) {
+    console.warn(
+      '[chats2GPTMessages] dropped invalid tool calls',
+      dropped.map(({ toolName, reason, argsLength }) => ({ toolName, reason, argsLength }))
+    );
+  }
+  return reconciled;
 };
 
 /**
