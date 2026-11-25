@@ -65,6 +65,9 @@ describe('sanitizeToolArguments', () => {
 
   it.each([
     ['production 71-char truncated string', TRUNCATED_ARGS],
+    ['interrupted right after a comma', '{"a":1,'],
+    ['interrupted after a comma and space', '{"a":1, '],
+    ['interrupted mid-object after a comma', '{"a":1,"b":2,'],
     ['truncated at value', '{"age":'],
     ['truncated string value', '{"name": "ab'],
     ['truncated array', '{"a": [1,2'],
@@ -144,6 +147,7 @@ describe('reconcileToolCallMessages', () => {
   it.each([
     ['truncated string value', '{"name": "ab'],
     ['truncated array', '{"a": [1,2'],
+    ['interrupted right after a comma', '{"a":1,'],
     ['brace only', '{']
   ])('drops truncated arguments (%s)', (_label, args) => {
     const messages: ChatCompletionMessageParam[] = [
@@ -247,6 +251,26 @@ describe('reconcileToolCallMessages', () => {
     expect(result).toHaveLength(1);
     expect(result[0]).toMatchObject({ role: 'assistant', reasoning_content: '推理内容' });
     expect((result[0] as any).tool_calls).toBeUndefined();
+  });
+
+  it('keeps the assistant message when content is empty but reasoning_content remains', () => {
+    const contents = ['', '   ', []];
+
+    contents.forEach((content) => {
+      const messages: ChatCompletionMessageParam[] = [
+        assistantMessage([{ id: 'call_1', name: 'tool', arguments: TRUNCATED_ARGS }], {
+          content: content as any,
+          reasoning_content: '推理内容'
+        })
+      ];
+
+      const { messages: result, dropped } = reconcileToolCallMessages(messages);
+
+      expect(dropped).toHaveLength(1);
+      expect(result).toHaveLength(1);
+      expect(result[0]).toMatchObject({ role: 'assistant', reasoning_content: '推理内容' });
+      expect((result[0] as any).tool_calls).toBeUndefined();
+    });
   });
 
   it('removes the whole assistant message when tool_calls are emptied and content is empty', () => {

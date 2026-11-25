@@ -75,6 +75,17 @@ const repairFormatGlitch = (
   if (parseToolArguments(repaired).kind !== 'valid') return { reason: 'unrepairable' };
   // 截断的稳定特征：原始串是修复结果的严格前缀。
   if (repaired.startsWith(original)) return { reason: 'truncated' };
+  // 中断也可能发生在逗号/空白之后（`{"a":1,`）：jsonrepair 会先去掉尾逗号再补括号，
+  // 修复结果便不再以原始串开头。这里用「去掉尾部逗号/空白后的前缀」再比一次；
+  // 若原串本身已带闭合括号（`{"a":1,}` 这类真尾逗号瑕疵），strippedPrefix 不会变化，仍按可修复处理。
+  const strippedPrefix = original.replace(/[\s,]+$/, '');
+  if (
+    strippedPrefix !== original &&
+    strippedPrefix.trim().length > 0 &&
+    repaired.startsWith(strippedPrefix)
+  ) {
+    return { reason: 'truncated' };
+  }
 
   return { repaired };
 };
@@ -110,18 +121,18 @@ export const sanitizeToolArguments = (params: unknown): string | undefined => {
   return resolution.keep ? resolution.arguments : undefined;
 };
 
+/** 单个内容字段是否「有内容」：非空字符串或非空数组。 */
+const hasContentValue = (value: unknown): boolean => {
+  if (typeof value === 'string') return value.trim().length > 0;
+  if (Array.isArray(value)) return value.length > 0;
+  return false;
+};
+
 /** assistant 消息在 tool_calls 被清空后是否仍有保留价值（有文本或推理内容）。 */
 const hasAssistantContent = (message: {
   content?: unknown;
   reasoning_content?: unknown;
-}): boolean => {
-  const content = message.content;
-  if (typeof content === 'string') return content.trim().length > 0;
-  if (Array.isArray(content)) return content.length > 0;
-  return (
-    typeof message.reasoning_content === 'string' && message.reasoning_content.trim().length > 0
-  );
-};
+}): boolean => hasContentValue(message.content) || hasContentValue(message.reasoning_content);
 
 /**
  * 回放前兜底：收敛历史消息里非法的 assistant.tool_calls[].function.arguments。

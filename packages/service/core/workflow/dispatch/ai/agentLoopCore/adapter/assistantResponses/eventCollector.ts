@@ -159,14 +159,18 @@ export const createAgentLoopCoreAssistantEventCollector = ({
           group.tools = group.toolCallIds.flatMap(
             (id) => group.tools?.filter((tool) => tool.id === id) ?? []
           );
-        } else if (event.finishReason === 'close') {
-          // 用户中断时流式累积的半截 tool call 没有完整参数和执行结果，不能落库回放。
-          if (group.tools?.length) {
-            group.tools = group.tools.filter((tool) => tool.response !== undefined);
-            if (!group.tools.length) {
-              delete group.tools;
-              delete group.toolCallIds;
-            }
+        }
+        // 用户中断时的清理必须独立于 toolCalls 是否存在：结束事件可能带上半截 tool call，
+        // 但只要有工具没有执行结果就不能落库回放。
+        if (event.finishReason === 'close' && group.tools?.length) {
+          const keptTools = group.tools.filter((tool) => tool.response !== undefined);
+          if (!keptTools.length) {
+            delete group.tools;
+            delete group.toolCallIds;
+          } else {
+            group.tools = keptTools;
+            // toolCallIds 必须与保留下来的卡片保持一致，否则会留下指向已删除卡片的悬空 id。
+            group.toolCallIds = keptTools.map((tool) => tool.id);
           }
         }
         refreshVisibility(group);
