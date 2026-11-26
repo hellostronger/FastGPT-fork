@@ -1,4 +1,5 @@
 import type { TeamAuditEvent } from './constants';
+import type { SourceMemberType } from '../type';
 import z from 'zod';
 import { ObjectIdSchema } from '../../../common/type/mongo';
 import { AppTypeEnum, ToolTypeList } from '../../../core/app/constants';
@@ -61,8 +62,22 @@ const GeneralAuditResourceTypeSchema = z.enum([
   AuditResourceTypeEnum.enterprise
 ]);
 
-const hasAuditResourceIdentity = (item: { id?: string; name?: string }) =>
-  Boolean(item.id || item.name?.trim());
+const hasAuditResourceIdentity = (item: {
+  id?: string;
+  name?: string;
+  appId?: string;
+  datasetId?: string;
+  skillId?: string;
+  collectionId?: string;
+}) =>
+  Boolean(
+    item.id ||
+      item.name?.trim() ||
+      item.appId ||
+      item.datasetId ||
+      item.skillId ||
+      item.collectionId
+  );
 
 const auditResourceIdentityRefine = {
   message: 'Each audit resource must provide an id or a non-empty name'
@@ -100,8 +115,27 @@ const GeneralAuditResourceBaseSchema = z.strictObject({
 });
 
 /** 持久化审计资源快照：写入时记录名称/头像等快照字段，与 MongoDB 严格子文档保持一致。 */
+// 1.6.x 历史形状：无 type 字段，恰好携带一个业务资源 ID（resumeInheritPermission 等旧调用点仍在使用）。
+const excludedResourceIds = {
+  appId: z.never().optional(),
+  datasetId: z.never().optional(),
+  skillId: z.never().optional(),
+  collectionId: z.never().optional()
+};
+
+const LegacyAuditResourceSchema = z.union([
+  z.strictObject({ ...excludedResourceIds, appId: ObjectIdSchema }),
+  z.strictObject({ ...excludedResourceIds, datasetId: ObjectIdSchema }),
+  z.strictObject({ ...excludedResourceIds, skillId: ObjectIdSchema }),
+  z.strictObject({ ...excludedResourceIds, collectionId: ObjectIdSchema })
+]);
+
 export const AuditResourceSchema = z
-  .union([CollectionAuditResourceBaseSchema, GeneralAuditResourceBaseSchema])
+  .union([
+    CollectionAuditResourceBaseSchema,
+    GeneralAuditResourceBaseSchema,
+    LegacyAuditResourceSchema
+  ])
   .refine(hasAuditResourceIdentity, auditResourceIdentityRefine);
 export type AuditResourceType = z.infer<typeof AuditResourceSchema>;
 export type CollectionAuditResourceType = Extract<
@@ -136,7 +170,7 @@ export const AuditListResourceSchema = z
 export type AuditListResourceType = z.infer<typeof AuditListResourceSchema>;
 export const AuditListResourcesSchema = z.array(AuditListResourceSchema);
 
-export const isCollectionAuditResource = <T extends { type: AuditResourceTypeEnum }>(
+export const isCollectionAuditResource = <T extends { type?: AuditResourceTypeEnum }>(
   item: T
 ): item is Extract<
   T,
@@ -455,3 +489,19 @@ export type TeamAuditSchemaType = {
       scope: 'system';
     }
 );
+
+/**
+ * 团队审计列表项（operationLog 列表 API 响应）：文档字段 + 服务端富化的操作人成员快照。
+ * resources 兼容结构化与 1.6.x 历史两种形状。
+ */
+export type TeamAuditListItemType = {
+  _id: string;
+  sourceMember: SourceMemberType;
+  event: TeamAuditEvent;
+  timestamp: Date;
+  metadata: Record<string, string>;
+  resources?: AuditResourceType[];
+  teamId?: string;
+  tmbId?: string;
+  scope?: 'member' | 'system';
+};
