@@ -256,7 +256,10 @@ export const FastGPTFeConfigsSchema = z.looseObject({
               .max(64)
               .meta({ description: 'SSO 来源标识，需与服务端配置的来源一致' }),
             title: z.string().min(1).max(128).meta({ description: '登录按钮显示标题' }),
-            icon: z.string().optional().meta({ description: '登录按钮图标' })
+            icon: z.string().optional().meta({ description: '登录按钮图标' }),
+            provider: z.string().optional().meta({
+              description: '登录类型（wecom/oauth2/…）；缺省回落 sso 服务的 SSO_PROVIDER'
+            })
           })
         )
         .max(20)
