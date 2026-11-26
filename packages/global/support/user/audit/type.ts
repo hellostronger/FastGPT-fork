@@ -172,7 +172,14 @@ export const AuditListResourceSchema = z
 export type AuditListResourceType = z.infer<typeof AuditListResourceSchema>;
 export const AuditListResourcesSchema = z.array(AuditListResourceSchema);
 
-export const isCollectionAuditResource = <T extends { type?: AuditResourceTypeEnum }>(
+export const isCollectionAuditResource = <T extends {
+  type?: AuditResourceTypeEnum;
+  /** 兼容 legacy 资源形状：联合成员可携带业务资源 ID（弱类型检查需要公共属性）。 */
+  appId?: unknown;
+  datasetId?: unknown;
+  skillId?: unknown;
+  collectionId?: unknown;
+}>(
   item: T
 ): item is Extract<
   T,
