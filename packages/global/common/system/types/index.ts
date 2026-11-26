@@ -245,8 +245,27 @@ export const FastGPTFeConfigsSchema = z.looseObject({
 
   sso: z
     .object({
-      icon: z.string().optional().meta({ description: 'SSO 登录方式图标' }),
-      title: z.string().optional().meta({ description: 'SSO 登录按钮显示标题' }),
+      icon: z.string().optional().meta({ description: 'SSO 登录方式图标（兼容旧单条配置）' }),
+      title: z.string().optional().meta({ description: 'SSO 登录按钮显示标题（兼容旧单条配置）' }),
+      providers: z
+        .array(
+          z.object({
+            id: z
+              .string()
+              .min(1)
+              .max(64)
+              .meta({ description: 'SSO 来源标识，需与服务端配置的来源一致' }),
+            title: z.string().min(1).max(128).meta({ description: '登录按钮显示标题' }),
+            icon: z.string().optional().meta({ description: '登录按钮图标' })
+          })
+        )
+        .max(20)
+        .optional()
+        .meta({ description: '多个 SSO 登录来源，数组顺序即登录页展示顺序' }),
+      autoLoginProviderId: z
+        .string()
+        .optional()
+        .meta({ description: '自动跳转时使用的 SSO 来源标识；仅支持选择一个来源' }),
       enabled: BoolSchema.optional().meta({
         description: '是否接入 SSO，由服务端根据 systemEnv.sso.url 派生，不作为后端鉴权依据'
       }),
@@ -347,6 +366,9 @@ export const FastGPTFeConfigsSchema = z.looseObject({
     .meta({ description: 'Agent 代码沙箱环境是否处于免费体验期' })
 });
 export type FastGPTFeConfigsType = z.infer<typeof FastGPTFeConfigsSchema>;
+export type SsoProviderType = NonNullable<
+  NonNullable<FastGPTFeConfigsType['sso']>['providers']
+>[number];
 
 export const CustomPdfParseSchema = z.looseObject({
   url: z.string().optional(),
