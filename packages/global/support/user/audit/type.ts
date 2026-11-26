@@ -164,7 +164,9 @@ const CollectionAuditListExtraFields = {
 export const AuditListResourceSchema = z
   .union([
     CollectionAuditResourceBaseSchema.extend(CollectionAuditListExtraFields),
-    GeneralAuditResourceBaseSchema.extend(AuditListCurrentTypeField)
+    GeneralAuditResourceBaseSchema.extend(AuditListCurrentTypeField),
+    // 1.6.x 历史形状：列表/导出也接受仅含业务资源 ID 的资源项
+    LegacyAuditResourceSchema
   ])
   .refine(hasAuditResourceIdentity, auditResourceIdentityRefine);
 export type AuditListResourceType = z.infer<typeof AuditListResourceSchema>;
