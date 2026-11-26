@@ -683,6 +683,9 @@ importers:
       iconv-lite:
         specifier: ^0.6.3
         version: 0.6.3
+      i18next:
+        specifier: 'catalog:'
+        version: 23.16.8
       ipaddr.js:
         specifier: 'catalog:'
         version: 2.4.0
