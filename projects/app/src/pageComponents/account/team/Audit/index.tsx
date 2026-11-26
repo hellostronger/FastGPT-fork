@@ -170,7 +170,7 @@ function AuditLog({ Tabs }: { Tabs: React.ReactNode }) {
                       wordBreak={['normal', 'break-word']}
                       overflowWrap={['normal', 'anywhere']}
                     >
-                      {t(i18nData.content as any, metadata)}
+                      {t(('content' in i18nData ? i18nData.content : i18nData.typeLabel) as any, metadata)}
                     </Td>
                   </Tr>
                 ) : null;
